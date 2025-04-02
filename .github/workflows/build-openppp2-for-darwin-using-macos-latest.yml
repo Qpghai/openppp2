@@ -27,7 +27,6 @@ jobs:
     env:
       ACTIONS_ALLOW_UNSECURE_COMMANDS: true
 
-workflow_dispatch:
     steps:
     - name: Checkout openppp2
       run: git clone https://github.com/liulilittle/openppp2.git openppp2 # uses: actions/checkout@v2
