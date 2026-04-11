@@ -1,9 +1,9 @@
 # Copyright  : Copyright (C) 2017 ~ 2035 SupersocksR ORG. All rights reserved.
-# Description: PPP PRIVATE NETWORK™ 2 WINDOWS ARM64 BUILD SCRIPT (AUTO DEPENDENCIES).(X) 1.0.0 VERSION.
-# Author     : Kyou.
-# Date-Time  : 2025/01/20
+# Description: PPP PRIVATE NETWORK(TM) 2 WINDOWS ARM64 BUILD SCRIPT.(X) 1.0.0 VERSION.
+# Author     : OpenCode.
+# Date-Time  : 2026/04/11
 
-name: PPP PRIVATE NETWORK™ 2 WINDOWS ARM64 BUILD (AUTO)
+name: PPP PRIVATE NETWORK(TM) 2 WINDOWS ARM64 BUILD SCRIPT.(X) 1.0.0 VERSION.
 
 on:
   push:
@@ -16,107 +16,117 @@ on:
 
 jobs:
   build:
+    runs-on: windows-11-arm                # ✅ 必须使用 ARM64 原生运行器
+
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-11-arm]
-        arch: [arm64]
-        platform:
-          - windows/arm64
-
-    runs-on: ${{ matrix.os }}
+        configuration: [Release]
+        platform: [ARM64]                  # ✅ 平台改为 ARM64
 
     env:
-      VCPKG_BINARY_SOURCES: 'clear;x-gha,readwrite'
+      VCPKG_DEFAULT_TRIPLET: arm64-windows-static   # ✅ ARM64 静态三元组
 
     steps:
-    - name: Checkout openppp2
-      uses: actions/checkout@v4
-      with:
-        repository: liulilittle/openppp2
-        path: openppp2
+      - name: Checkout openppp2
+        uses: actions/checkout@v4
 
-    - name: Get number of CPUs
-      run: |
-        echo "ncpu=$env:NUMBER_OF_PROCESSORS" >> $env:GITHUB_ENV
-      shell: powershell
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
 
-    - name: Setup vcpkg
-      run: |
-        if (-not (Test-Path "vcpkg")) {
-          git clone https://github.com/Microsoft/vcpkg.git vcpkg
-          .\vcpkg\bootstrap-vcpkg.bat
-        }
-        echo "${{ github.workspace }}\vcpkg" >> $env:GITHUB_PATH
-      shell: powershell
+      - name: Setup NuGet
+        uses: NuGet/setup-nuget@v2
 
-    - name: Install dependencies via vcpkg (NO jemalloc)
-      run: |
-        # 移除 jemalloc，避免 ARM64 构建失败
-        vcpkg install --triplet arm64-windows `
-          boost-system boost-thread boost-asio boost-program-options `
-          openssl `
-          --clean-after-build
-      shell: powershell
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgJsonGlob: ''
 
-    - name: Set THIRD_PARTY_LIBRARY_DIR
-      run: |
-        echo "THIRD_PARTY_LIBRARY_DIR=${{ github.workspace }}\vcpkg\installed\arm64-windows" >> $env:GITHUB_ENV
-      shell: powershell
+      - name: Install vcpkg dependencies (NO jemalloc)
+        shell: pwsh
+        run: |
+          # 移除 jemalloc，避免 ARM64 构建失败
+          vcpkg install `
+            boost-system:$env:VCPKG_DEFAULT_TRIPLET `
+            boost-coroutine:$env:VCPKG_DEFAULT_TRIPLET `
+            boost-thread:$env:VCPKG_DEFAULT_TRIPLET `
+            boost-context:$env:VCPKG_DEFAULT_TRIPLET `
+            boost-regex:$env:VCPKG_DEFAULT_TRIPLET `
+            boost-filesystem:$env:VCPKG_DEFAULT_TRIPLET `
+            openssl:$env:VCPKG_DEFAULT_TRIPLET
 
-    - name: Print environment variables
-      run: |
-        Write-Host "ncpu:$env:ncpu"
-        Write-Host "THIRD_PARTY_LIBRARY_DIR:$env:THIRD_PARTY_LIBRARY_DIR"
-      shell: powershell
+      - name: Restore solution packages
+        shell: pwsh
+        run: nuget restore .\ppp.sln
 
-    - name: Replace THIRD_PARTY_LIBRARY_DIR in CMakeLists.txt
-      run: |
-        cd openppp2
-        (Get-Content CMakeLists.txt) -replace 'SET\(THIRD_PARTY_LIBRARY_DIR .*\)', 'SET(THIRD_PARTY_LIBRARY_DIR $ENV{THIRD_PARTY_LIBRARY_DIR})' | Set-Content CMakeLists.txt
-      shell: powershell
+      - name: Build openppp2 (ARM64)
+        shell: pwsh
+        run: |
+          msbuild .\ppp.sln /m /restore `
+            /p:Configuration=${{ matrix.configuration }} `
+            /p:Platform=${{ matrix.platform }} `
+            /p:VcpkgEnableManifest=false `
+            /p:VcpkgEnabled=true `
+            /p:VcpkgUseStatic=true `
+            /p:PreferredToolArchitecture=amd64_arm64   # ✅ 指定交叉工具链
 
-    - name: Disable jemalloc in CMakeLists.txt (ARM64 workaround)
-      run: |
-        cd openppp2
-        # 注释掉 jemalloc 相关的查找和链接指令
-        (Get-Content CMakeLists.txt) -replace 'find_package\(jemalloc', '# find_package(jemalloc' | Set-Content CMakeLists.txt
-        (Get-Content CMakeLists.txt) -replace 'target_link_libraries\(.*jemalloc', '# target_link_libraries(... jemalloc' | Set-Content CMakeLists.txt
-        Write-Host "Jemalloc references commented out."
-      shell: powershell
+      - name: Collect Windows artifacts (ARM64 paths)
+        shell: pwsh
+        run: |
+          $artifactDir = Join-Path $env:GITHUB_WORKSPACE 'artifact'
+          New-Item -ItemType Directory -Force -Path $artifactDir | Out-Null
 
-    - name: Configure CMake for Windows ARM64
-      run: |
-        cd openppp2
-        mkdir -p build
-        cd build
-        cmake .. `
-          -G "Visual Studio 17 2022" `
-          -A ARM64 `
-          -DCMAKE_BUILD_TYPE=Release `
-          -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}\vcpkg\scripts\buildsystems\vcpkg.cmake"
-      shell: powershell
+          # ARM64 输出目录通常为 ARM64\Release 或 bin\ARM64\Release
+          $outputDir = Join-Path $env:GITHUB_WORKSPACE '${{ matrix.platform }}\${{ matrix.configuration }}'
+          if (-not (Test-Path $outputDir)) {
+            $outputDir = Join-Path $env:GITHUB_WORKSPACE 'bin\${{ matrix.platform }}\${{ matrix.configuration }}'
+          }
+          if (-not (Test-Path $outputDir)) {
+            throw "Build output directory not found. Tried: $outputDir"
+          }
 
-    - name: Build openppp2
-      run: |
-        cd openppp2\build
-        cmake --build . --config Release --parallel $env:ncpu
-      shell: powershell
+          $files = @('ppp.exe', 'PaperAirplane.dll', 'wintun.dll')
+          foreach ($file in $files) {
+            $source = Join-Path $outputDir $file
+            if (Test-Path $source) {
+              Copy-Item $source $artifactDir -Force
+            }
+          }
 
-    - name: Package artifact
-      run: |
-        $artifact = "openppp2-windows-arm64.zip"
-        $binPath = "openppp2\bin\Release"
-        if (Test-Path $binPath) {
-          Compress-Archive -Path $binPath\* -DestinationPath openppp2\bin\$artifact
-        } else {
-          Compress-Archive -Path openppp2\build\Release\* -DestinationPath openppp2\bin\$artifact
-        }
-        echo "ARTIFACT_NAME=$artifact" >> $env:GITHUB_ENV
-      shell: powershell
+          # ARM64 驱动后备路径
+          $fallbackFiles = @(
+            @{ Source = 'Driver\ARM64\PaperAirplane.dll'; Target = 'PaperAirplane.dll' },
+            @{ Source = 'Driver\ARM64\sysproxy64.exe'; Target = 'sysproxy64.exe' }
+          )
+          foreach ($file in $fallbackFiles) {
+            $source = Join-Path $env:GITHUB_WORKSPACE $file.Source
+            $target = Join-Path $artifactDir $file.Target
+            if ((-not (Test-Path $target)) -and (Test-Path $source)) {
+              Copy-Item $source $target -Force
+            }
+          }
 
-    - name: Upload artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: openppp2-windows-arm64
-        path: openppp2\bin\${{ env.ARTIFACT_NAME }}
+          $resourceFiles = @(
+            'appsettings.json',
+            'cacert.pem',
+            'cacert.sha256',
+            'dns-rules.txt',
+            'firewall-rules.txt',
+            'ip.txt',
+            'cmcc.txt',
+            'starrylink.net.key',
+            'starrylink.net.pem'
+          )
+          foreach ($file in $resourceFiles) {
+            $source = Join-Path $env:GITHUB_WORKSPACE $file
+            if (Test-Path $source) {
+              Copy-Item $source $artifactDir -Force
+            }
+          }
+
+      - name: Archive openppp2
+        uses: actions/upload-artifact@v4
+        with:
+          name: openppp2-windows-${{ matrix.platform }}-${{ matrix.configuration }}
+          path: artifact
+          if-no-files-found: error
