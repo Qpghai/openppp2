@@ -41,7 +41,7 @@ jobs:
         echo "ncpu=$env:NUMBER_OF_PROCESSORS" >> $env:GITHUB_ENV
       shell: powershell
 
-    - name: Setup vcpkg manually (NO baseline required)
+    - name: Setup vcpkg manually
       run: |
         if (-not (Test-Path "vcpkg")) {
           git clone https://github.com/Microsoft/vcpkg.git vcpkg
@@ -92,6 +92,11 @@ jobs:
           -A ARM64 `
           -DCMAKE_BUILD_TYPE=Release `
           -DCMAKE_POLICY_VERSION_MINIMUM=3.5 `
+          -DCMAKE_CXX_STANDARD=17 `
+          -DCMAKE_CXX_STANDARD_REQUIRED=ON `
+          -DCMAKE_CXX_FLAGS="/std:c++17" `
+          -DCMAKE_C_FLAGS="/std:c11" `
+          -DCOMPILER_SUPPORTS_CXX17=1 `
           -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}\vcpkg\scripts\buildsystems\vcpkg.cmake"
       shell: powershell
 
