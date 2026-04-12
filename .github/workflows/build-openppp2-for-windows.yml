@@ -65,7 +65,7 @@ jobs:
           }
           vcpkg install --triplet $env:VCPKG_DEFAULT_TRIPLET @pkgs --clean-after-build --allow-unsupported
 
-      - name: 🧹 Prepare CMakeLists.txt (Auto-Fix Paths, GCC flags & Jemalloc)
+      - name: 🧹 Prepare CMakeLists.txt (Remove GCC flags & Fix paths)
         shell: pwsh
         working-directory: openppp2
         run: |
@@ -74,8 +74,8 @@ jobs:
           # 1. 替换第三方库路径为环境变量
           $content = $content -replace 'SET\(THIRD_PARTY_LIBRARY_DIR .*\)', 'SET(THIRD_PARTY_LIBRARY_DIR $ENV{THIRD_PARTY_LIBRARY_DIR})'
 
-          # 2. 移除 GCC 专属警告选项，避免 MSVC 报错 D8021
-          $content = $content -replace '-Wno-format', ''
+          # 2. 移除所有 GCC/Clang 特有的 -Wno-* 警告标志（MSVC 无法识别）
+          $content = $content -replace '\s*-Wno-[^\s\)]+', ''
 
           # 3. 如果是 ARM64，注释掉 jemalloc 引用
           if ("${{ matrix.arch }}" -eq "ARM64") {
@@ -90,6 +90,9 @@ jobs:
       - name: 📐 Configure CMake
         shell: pwsh
         run: |
+          # 防止 vcpkg 工具链内部产生无效的策略版本参数
+          $env:CMAKE_POLICY_VERSION_MINIMUM = "3.5"
+
           $env:THIRD_PARTY_LIBRARY_DIR = "${{ github.workspace }}\vcpkg\installed\${{ matrix.vcpkg_triplet }}"
 
           cd openppp2
@@ -100,7 +103,6 @@ jobs:
             -G "$env:CMAKE_GENERATOR" `
             -A ${{ matrix.arch }} `
             -DCMAKE_BUILD_TYPE=Release `
-            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 `
             -DCMAKE_CXX_STANDARD=17 `
             -DCMAKE_CXX_STANDARD_REQUIRED=ON `
             -DCMAKE_CXX_FLAGS="/std:c++17" `
@@ -109,6 +111,8 @@ jobs:
             -DCOMPILER_SUPPORTS_CXX1Z=1 `
             -DCOMPILER_SUPPORTS_CXX14=1 `
             -DCOMPILER_SUPPORTS_CXX11=1 `
+            -DCMAKE_CXX_COMPILER_WORKS=1 `
+            -DCMAKE_C_COMPILER_WORKS=1 `
             -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}\vcpkg\scripts\buildsystems\vcpkg.cmake"
 
       - name: 🛠️ Build
