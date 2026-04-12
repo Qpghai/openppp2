@@ -32,6 +32,7 @@ jobs:
       VCPKG_BINARY_SOURCES: 'clear;x-gha,readwrite'
       CMAKE_GENERATOR: "Visual Studio 17 2022"
       VCPKG_ROOT: ${{ github.workspace }}\vcpkg
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
       - name: 📥 Checkout openppp2
@@ -53,18 +54,24 @@ jobs:
           .\vcpkg\bootstrap-vcpkg.bat
           echo "${{ github.workspace }}\vcpkg" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
-      - name: 📚 Install Dependencies
+      - name: 📚 Install Dependencies (with retries)
         shell: pwsh
         run: |
           $pkgs = @(
             "boost-system", "boost-thread", "boost-asio", "boost-program-options",
             "boost-coroutine", "boost-context", "boost-regex", "boost-filesystem",
+            "boost-date-time",
             "openssl"
           )
           if ("${{ matrix.arch }}" -eq "x64") {
             $pkgs += "jemalloc"
           }
-          vcpkg install --triplet $env:VCPKG_DEFAULT_TRIPLET @pkgs --clean-after-build --allow-unsupported
+          
+          vcpkg install --triplet $env:VCPKG_DEFAULT_TRIPLET @pkgs `
+            --clean-after-build `
+            --allow-unsupported `
+            --download-attempts=10 `
+            --download-retries=5
 
       - name: 🧹 Generate Windows-compatible CMakeLists.txt
         shell: pwsh
@@ -75,8 +82,8 @@ jobs:
 
           # 生成全新的 Windows 专用 CMakeLists.txt
           @"
-          CMAKE_MINIMUM_REQUIRED(VERSION 3.5)
-          PROJECT(ppp C CXX)
+          cmake_minimum_required(VERSION 3.5)
+          project(ppp C CXX)
 
           # Windows specific settings
           set(CMAKE_CXX_STANDARD 17)
@@ -88,13 +95,13 @@ jobs:
               message(FATAL_ERROR "CMAKE_TOOLCHAIN_FILE must be set to vcpkg.cmake")
           endif()
 
-          # Boost configuration
+          # Boost configuration for CMake 3.30+ (FindBoost removed)
           set(BOOST_ROOT "$ENV{VCPKG_ROOT}/installed/$ENV{VCPKG_DEFAULT_TRIPLET}")
+          set(Boost_DIR "${BOOST_ROOT}/share/boost")
           set(Boost_USE_STATIC_LIBS ON)
           set(Boost_USE_DEBUG_LIBS OFF)
           set(Boost_USE_RELEASE_LIBS ON)
-          set(Boost_NO_BOOST_CMAKE ON)  # Use CMake's built-in FindBoost
-          find_package(Boost REQUIRED COMPONENTS system thread coroutine context regex filesystem)
+          find_package(Boost CONFIG REQUIRED COMPONENTS system thread coroutine context regex filesystem date_time)
 
           # OpenSSL
           find_package(OpenSSL REQUIRED)
@@ -162,7 +169,7 @@ jobs:
 
           # Link libraries
           target_link_libraries(${PROJECT_NAME} PRIVATE
-              ${Boost_LIBRARIES}
+              Boost::system Boost::coroutine Boost::thread Boost::context Boost::regex Boost::filesystem Boost::date_time
               OpenSSL::SSL OpenSSL::Crypto
           )
 
