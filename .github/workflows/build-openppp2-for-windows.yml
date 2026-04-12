@@ -87,8 +87,8 @@ jobs:
               message(FATAL_ERROR "CMAKE_TOOLCHAIN_FILE must be set to vcpkg.cmake")
           endif()
 
-          # Find dependencies via vcpkg
-          find_package(Boost REQUIRED COMPONENTS system thread coroutine context regex filesystem)
+          # Find dependencies via vcpkg (CONFIG mode ensures Boost finds its own CMake configs)
+          find_package(Boost CONFIG REQUIRED COMPONENTS system thread coroutine context regex filesystem)
           find_package(OpenSSL REQUIRED)
 
           # Jemalloc only on x64
@@ -200,7 +200,6 @@ jobs:
           $artifactDir = Join-Path $env:GITHUB_WORKSPACE 'artifact'
           New-Item -ItemType Directory -Force -Path $artifactDir | Out-Null
 
-          # 尝试多个可能的输出目录
           $possiblePaths = @(
               "openppp2\bin",
               "openppp2\build\Release",
@@ -225,7 +224,6 @@ jobs:
               }
           }
 
-          # 复制资源文件
           $resourceFiles = @(
               'appsettings.json', 'cacert.pem', 'cacert.sha256',
               'dns-rules.txt', 'firewall-rules.txt', 'ip.txt', 'cmcc.txt',
