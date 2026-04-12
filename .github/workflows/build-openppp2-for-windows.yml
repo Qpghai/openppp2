@@ -54,7 +54,7 @@ jobs:
           .\vcpkg\bootstrap-vcpkg.bat
           echo "${{ github.workspace }}\vcpkg" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
-      - name: 📚 Install Dependencies (with retries)
+      - name: 📚 Install Dependencies
         shell: pwsh
         run: |
           $pkgs = @(
@@ -69,9 +69,7 @@ jobs:
           
           vcpkg install --triplet $env:VCPKG_DEFAULT_TRIPLET @pkgs `
             --clean-after-build `
-            --allow-unsupported `
-            --download-attempts=10 `
-            --download-retries=5
+            --allow-unsupported
 
       - name: 🧹 Generate Windows-compatible CMakeLists.txt
         shell: pwsh
