@@ -31,6 +31,7 @@ jobs:
       VCPKG_DEFAULT_TRIPLET: ${{ matrix.vcpkg_triplet }}
       VCPKG_BINARY_SOURCES: 'clear;x-gha,readwrite'
       CMAKE_GENERATOR: "Visual Studio 17 2022"
+      VCPKG_ROOT: ${{ github.workspace }}\vcpkg
 
     steps:
       - name: 📥 Checkout openppp2
@@ -87,8 +88,15 @@ jobs:
               message(FATAL_ERROR "CMAKE_TOOLCHAIN_FILE must be set to vcpkg.cmake")
           endif()
 
-          # Find dependencies via vcpkg (CONFIG mode ensures Boost finds its own CMake configs)
-          find_package(Boost CONFIG REQUIRED COMPONENTS system thread coroutine context regex filesystem)
+          # Boost configuration
+          set(BOOST_ROOT "$ENV{VCPKG_ROOT}/installed/$ENV{VCPKG_DEFAULT_TRIPLET}")
+          set(Boost_USE_STATIC_LIBS ON)
+          set(Boost_USE_DEBUG_LIBS OFF)
+          set(Boost_USE_RELEASE_LIBS ON)
+          set(Boost_NO_BOOST_CMAKE ON)  # Use CMake's built-in FindBoost
+          find_package(Boost REQUIRED COMPONENTS system thread coroutine context regex filesystem)
+
+          # OpenSSL
           find_package(OpenSSL REQUIRED)
 
           # Jemalloc only on x64
@@ -149,11 +157,12 @@ jobs:
               ${PROJECT_SOURCE_DIR}/common/json/include
               ${PROJECT_SOURCE_DIR}/common/lwip/my
               ${PROJECT_SOURCE_DIR}/common/lwip/include
+              ${Boost_INCLUDE_DIRS}
           )
 
           # Link libraries
           target_link_libraries(${PROJECT_NAME} PRIVATE
-              Boost::system Boost::coroutine Boost::thread Boost::context Boost::regex Boost::filesystem
+              ${Boost_LIBRARIES}
               OpenSSL::SSL OpenSSL::Crypto
           )
 
