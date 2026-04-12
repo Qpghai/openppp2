@@ -17,7 +17,6 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 可选架构：'x64' 或 'ARM64'，默认同时构建
         arch: [x64, ARM64]
         include:
           - arch: x64
@@ -30,7 +29,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     env:
       VCPKG_DEFAULT_TRIPLET: ${{ matrix.vcpkg_triplet }}
-      VCPKG_BINARY_SOURCES: 'clear;x-gha,readwrite'   # 启用缓存加速
+      VCPKG_BINARY_SOURCES: 'clear;x-gha,readwrite'
       CMAKE_GENERATOR: "Visual Studio 17 2022"
 
     steps:
@@ -56,7 +55,6 @@ jobs:
       - name: 📚 Install Dependencies (Auto-Discovery)
         shell: pwsh
         run: |
-          # 自动安装项目所需依赖（jemalloc 在 ARM64 上跳过，由后续脚本处理）
           $pkgs = @(
             "boost-system", "boost-thread", "boost-asio", "boost-program-options",
             "boost-coroutine", "boost-context", "boost-regex", "boost-filesystem",
@@ -65,7 +63,8 @@ jobs:
           if ("${{ matrix.arch }}" -eq "x64") {
             $pkgs += "jemalloc"
           }
-          vcpkg install --triplet $env:VCPKG_DEFAULT_TRIPLET @pkgs --clean-after-build
+          # 添加 --allow-unsupported 以允许在 ARM64 上构建 boost-coroutine
+          vcpkg install --triplet $env:VCPKG_DEFAULT_TRIPLET @pkgs --clean-after-build --allow-unsupported
 
       - name: 🧹 Prepare CMakeLists.txt (Auto-Fix Paths & Jemalloc)
         shell: pwsh
