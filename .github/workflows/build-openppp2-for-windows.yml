@@ -1,0 +1,157 @@
+# Copyright  : Copyright (C) 2017 ~ 2035 SupersocksR ORG. All rights reserved.
+# Description: PPP PRIVATE NETWORK™ 2 WINDOWS BUILD (CMake + vcpkg, Auto).(X) 1.0.0 VERSION.
+# Author     : OpenCode.
+# Date-Time  : 2026/04/12
+
+name: 🪟 Windows Build (CMake + vcpkg)
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        # 可选架构：'x64' 或 'ARM64'，默认同时构建
+        arch: [x64, ARM64]
+        include:
+          - arch: x64
+            runner: windows-latest
+            vcpkg_triplet: x64-windows-static
+          - arch: ARM64
+            runner: windows-11-arm
+            vcpkg_triplet: arm64-windows-static
+
+    runs-on: ${{ matrix.runner }}
+    env:
+      VCPKG_DEFAULT_TRIPLET: ${{ matrix.vcpkg_triplet }}
+      VCPKG_BINARY_SOURCES: 'clear;x-gha,readwrite'   # 启用缓存加速
+      CMAKE_GENERATOR: "Visual Studio 17 2022"
+
+    steps:
+      - name: 📥 Checkout openppp2
+        uses: actions/checkout@v4
+        with:
+          repository: liulilittle/openppp2
+          path: openppp2
+
+      - name: 🔢 Get CPU cores
+        shell: pwsh
+        run: echo "ncpu=$env:NUMBER_OF_PROCESSORS" >> $env:GITHUB_ENV
+
+      - name: 📦 Setup vcpkg (Auto, No Manifest Required)
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "vcpkg")) {
+            git clone https://github.com/Microsoft/vcpkg.git vcpkg
+          }
+          .\vcpkg\bootstrap-vcpkg.bat
+          echo "${{ github.workspace }}\vcpkg" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: 📚 Install Dependencies (Auto-Discovery)
+        shell: pwsh
+        run: |
+          # 自动安装项目所需依赖（jemalloc 在 ARM64 上跳过，由后续脚本处理）
+          $pkgs = @(
+            "boost-system", "boost-thread", "boost-asio", "boost-program-options",
+            "boost-coroutine", "boost-context", "boost-regex", "boost-filesystem",
+            "openssl"
+          )
+          if ("${{ matrix.arch }}" -eq "x64") {
+            $pkgs += "jemalloc"
+          }
+          vcpkg install --triplet $env:VCPKG_DEFAULT_TRIPLET @pkgs --clean-after-build
+
+      - name: 🧹 Prepare CMakeLists.txt (Auto-Fix Paths & Jemalloc)
+        shell: pwsh
+        working-directory: openppp2
+        run: |
+          # 1. 替换第三方库路径为环境变量
+          (Get-Content CMakeLists.txt) -replace 'SET\(THIRD_PARTY_LIBRARY_DIR .*\)', 'SET(THIRD_PARTY_LIBRARY_DIR $ENV{THIRD_PARTY_LIBRARY_DIR})' | Set-Content CMakeLists.txt
+
+          # 2. 如果是 ARM64 架构，注释掉 jemalloc 相关引用（避免链接失败）
+          if ("${{ matrix.arch }}" -eq "ARM64") {
+            (Get-Content CMakeLists.txt) -replace 'find_package\(jemalloc', '# find_package(jemalloc' | Set-Content CMakeLists.txt
+            (Get-Content CMakeLists.txt) -replace 'target_link_libraries\(.*jemalloc', '# target_link_libraries(... jemalloc' | Set-Content CMakeLists.txt
+            Write-Host "✅ Jemalloc disabled for ARM64"
+          }
+
+      - name: 📐 Configure CMake
+        shell: pwsh
+        run: |
+          $env:THIRD_PARTY_LIBRARY_DIR = "${{ github.workspace }}\vcpkg\installed\${{ matrix.vcpkg_triplet }}"
+
+          cd openppp2
+          New-Item -ItemType Directory -Force -Path build | Out-Null
+          cd build
+
+          cmake .. `
+            -G "$env:CMAKE_GENERATOR" `
+            -A ${{ matrix.arch }} `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 `
+            -DCMAKE_CXX_STANDARD=17 `
+            -DCMAKE_CXX_STANDARD_REQUIRED=ON `
+            -DCMAKE_CXX_FLAGS="/std:c++17" `
+            -DCMAKE_C_FLAGS="/std:c11" `
+            -DCOMPILER_SUPPORTS_CXX17=1 `
+            -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}\vcpkg\scripts\buildsystems\vcpkg.cmake"
+
+      - name: 🛠️ Build
+        shell: pwsh
+        run: |
+          cd openppp2\build
+          cmake --build . --config Release --parallel $env:ncpu
+
+      - name: 📦 Collect Artifacts
+        shell: pwsh
+        run: |
+          $artifactDir = Join-Path $env:GITHUB_WORKSPACE 'artifact'
+          New-Item -ItemType Directory -Force -Path $artifactDir | Out-Null
+
+          # 尝试多个常见输出目录
+          $possiblePaths = @(
+            "openppp2\build\Release",
+            "openppp2\bin\Release",
+            "openppp2\${{ matrix.arch }}\Release"
+          )
+          $found = $false
+          foreach ($p in $possiblePaths) {
+            $full = Join-Path $env:GITHUB_WORKSPACE $p
+            if (Test-Path $full) {
+              Copy-Item -Path "$full\*" -Destination $artifactDir -Recurse -Force
+              $found = $true
+              break
+            }
+          }
+          if (-not $found) {
+            Write-Warning "No standard output directory found. Searching recursively for ppp.exe..."
+            $exe = Get-ChildItem -Path openppp2 -Filter ppp.exe -Recurse | Select-Object -First 1
+            if ($exe) {
+              Copy-Item $exe.FullName $artifactDir -Force
+            } else {
+              throw "ppp.exe not found!"
+            }
+          }
+
+          # 补充资源文件
+          $resourceFiles = @(
+            'appsettings.json', 'cacert.pem', 'cacert.sha256',
+            'dns-rules.txt', 'firewall-rules.txt', 'ip.txt', 'cmcc.txt',
+            'starrylink.net.key', 'starrylink.net.pem'
+          )
+          foreach ($file in $resourceFiles) {
+            $src = Join-Path $env:GITHUB_WORKSPACE "openppp2\$file"
+            if (Test-Path $src) { Copy-Item $src $artifactDir -Force }
+          }
+
+      - name: 📤 Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openppp2-windows-${{ matrix.arch }}
+          path: artifact
