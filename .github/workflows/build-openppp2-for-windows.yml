@@ -52,7 +52,7 @@ jobs:
           .\vcpkg\bootstrap-vcpkg.bat
           echo "${{ github.workspace }}\vcpkg" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
-      - name: 📚 Install Dependencies (Auto-Discovery)
+      - name: 📚 Install Dependencies
         shell: pwsh
         run: |
           $pkgs = @(
@@ -65,39 +65,119 @@ jobs:
           }
           vcpkg install --triplet $env:VCPKG_DEFAULT_TRIPLET @pkgs --clean-after-build --allow-unsupported
 
-      - name: 🧹 Prepare CMakeLists.txt (Remove GCC flags, Linux sources & Fix paths)
+      - name: 🧹 Generate Windows-compatible CMakeLists.txt
         shell: pwsh
         working-directory: openppp2
         run: |
-          $content = Get-Content CMakeLists.txt -Raw
+          # 备份原文件
+          Copy-Item CMakeLists.txt CMakeLists.txt.bak
 
-          # 1. 替换第三方库路径为环境变量
-          $content = $content -replace 'SET\(THIRD_PARTY_LIBRARY_DIR .*\)', 'SET(THIRD_PARTY_LIBRARY_DIR $ENV{THIRD_PARTY_LIBRARY_DIR})'
+          # 生成全新的 Windows 专用 CMakeLists.txt
+          @"
+          CMAKE_MINIMUM_REQUIRED(VERSION 3.5)
+          PROJECT(ppp C CXX)
 
-          # 2. 移除所有 GCC/Clang 特有的 -Wno-* 警告标志（MSVC 无法识别）
-          $content = $content -replace '\s*-Wno-[^\s\)]+', ''
+          # Windows specific settings
+          set(CMAKE_CXX_STANDARD 17)
+          set(CMAKE_CXX_STANDARD_REQUIRED ON)
+          set(CMAKE_CXX_EXTENSIONS OFF)
 
-          # 3. 注释掉所有 Linux 专属源文件的添加（避免 Windows 下包含 POSIX 头文件）
-          $content = $content -replace '(\s*)([^#\n]*linux/[^ \t\)]+\.cpp)', '$1# $2  # Disabled for Windows build'
+          # Use vcpkg toolchain
+          if(NOT DEFINED CMAKE_TOOLCHAIN_FILE)
+              message(FATAL_ERROR "CMAKE_TOOLCHAIN_FILE must be set to vcpkg.cmake")
+          endif()
 
-          # 4. 如果是 ARM64，注释掉 jemalloc 引用
-          if ("${{ matrix.arch }}" -eq "ARM64") {
-            $content = $content -replace 'find_package\(jemalloc', '# find_package(jemalloc'
-            $content = $content -replace 'target_link_libraries\(.*jemalloc', '# target_link_libraries(... jemalloc'
-            Write-Host "✅ Jemalloc disabled for ARM64"
-          }
+          # Find dependencies via vcpkg
+          find_package(Boost REQUIRED COMPONENTS system thread coroutine context regex filesystem)
+          find_package(OpenSSL REQUIRED)
 
-          Set-Content -Path CMakeLists.txt -Value $content -NoNewline
-          Write-Host "✅ CMakeLists.txt patched successfully"
+          # Jemalloc only on x64
+          if("${{ matrix.arch }}" STREQUAL "x64")
+              find_package(jemalloc CONFIG REQUIRED)
+              add_definitions(-DJEMALLOC)
+          else()
+              message(STATUS "Jemalloc disabled for ARM64")
+          endif()
+
+          # Common definitions
+          add_definitions(-DFUNCTION -DBUDDY_ALLOC_IMPLEMENTATION -DWIN32 -D_WINDOWS)
+
+          # Compiler flags for MSVC
+          set(CMAKE_C_FLAGS_RELEASE "/O2 /MT")
+          set(CMAKE_CXX_FLAGS_RELEASE "/O2 /MT")
+          set(CMAKE_C_FLAGS_DEBUG "/Od /MTd /D_DEBUG")
+          set(CMAKE_CXX_FLAGS_DEBUG "/Od /MTd /D_DEBUG")
+
+          # Source files (excluding linux/darwin paths)
+          file(GLOB_RECURSE SOURCE_FILES
+              main.cpp
+              common/lwip/my/*.c
+              common/lwip/core/*.c
+              common/lwip/api/*.c
+              common/aggligator/*.cpp
+              common/base64/*.cpp
+              common/chnroutes2/*.cpp
+              common/json/src/*.cpp
+              common/libtcpip/*.cpp
+              common/dnslib/*.cpp
+              common/unix/*.c
+              common/unix/*.cpp
+              common/aesni/aes.cpp
+              ppp/*.c
+              ppp/*.cpp
+              win32/*.c
+              win32/*.cpp
+          )
+
+          # Explicitly remove any linux/darwin files that might have been globbed (safety)
+          list(FILTER SOURCE_FILES EXCLUDE REGEX ".*/linux/.*")
+          list(FILTER SOURCE_FILES EXCLUDE REGEX ".*/darwin/.*")
+
+          # AES NI files (optional)
+          file(GLOB_RECURSE AES_NI_SOURCE_FILES common/aesni/impl/*.c common/aesni/impl/*.cpp)
+
+          # Create executable
+          add_executable(${PROJECT_NAME} ${SOURCE_FILES} ${AES_NI_SOURCE_FILES})
+          set_target_properties(${PROJECT_NAME} PROPERTIES
+              RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/../bin"
+          )
+
+          # Include directories
+          target_include_directories(${PROJECT_NAME} PRIVATE
+              ${PROJECT_SOURCE_DIR}
+              ${PROJECT_SOURCE_DIR}/common
+              ${PROJECT_SOURCE_DIR}/common/json/include
+              ${PROJECT_SOURCE_DIR}/common/lwip/my
+              ${PROJECT_SOURCE_DIR}/common/lwip/include
+          )
+
+          # Link libraries
+          target_link_libraries(${PROJECT_NAME} PRIVATE
+              Boost::system Boost::coroutine Boost::thread Boost::context Boost::regex Boost::filesystem
+              OpenSSL::SSL OpenSSL::Crypto
+          )
+
+          if("${{ matrix.arch }}" STREQUAL "x64")
+              target_link_libraries(${PROJECT_NAME} PRIVATE jemalloc)
+          endif()
+
+          # Windows system libraries
+          target_link_libraries(${PROJECT_NAME} PRIVATE
+              ws2_32
+              iphlpapi
+              userenv
+              bcrypt
+          )
+
+          # Disable common MSVC warnings
+          target_compile_options(${PROJECT_NAME} PRIVATE /W3 /wd4996 /wd4244 /wd4267)
+          "@ | Set-Content -Path CMakeLists.txt -NoNewline
+
+          Write-Host "✅ Generated Windows-specific CMakeLists.txt"
 
       - name: 📐 Configure CMake
         shell: pwsh
         run: |
-          # 防止 vcpkg 工具链内部产生无效的策略版本参数
-          $env:CMAKE_POLICY_VERSION_MINIMUM = "3.5"
-
-          $env:THIRD_PARTY_LIBRARY_DIR = "${{ github.workspace }}\vcpkg\installed\${{ matrix.vcpkg_triplet }}"
-
           cd openppp2
           New-Item -ItemType Directory -Force -Path build | Out-Null
           cd build
@@ -106,16 +186,6 @@ jobs:
             -G "$env:CMAKE_GENERATOR" `
             -A ${{ matrix.arch }} `
             -DCMAKE_BUILD_TYPE=Release `
-            -DCMAKE_CXX_STANDARD=17 `
-            -DCMAKE_CXX_STANDARD_REQUIRED=ON `
-            -DCMAKE_CXX_FLAGS="/std:c++17" `
-            -DCMAKE_C_FLAGS="/std:c11" `
-            -DCOMPILER_SUPPORTS_CXX17=1 `
-            -DCOMPILER_SUPPORTS_CXX1Z=1 `
-            -DCOMPILER_SUPPORTS_CXX14=1 `
-            -DCOMPILER_SUPPORTS_CXX11=1 `
-            -DCMAKE_CXX_COMPILER_WORKS=1 `
-            -DCMAKE_C_COMPILER_WORKS=1 `
             -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}\vcpkg\scripts\buildsystems\vcpkg.cmake"
 
       - name: 🛠️ Build
@@ -130,38 +200,40 @@ jobs:
           $artifactDir = Join-Path $env:GITHUB_WORKSPACE 'artifact'
           New-Item -ItemType Directory -Force -Path $artifactDir | Out-Null
 
+          # 尝试多个可能的输出目录
           $possiblePaths = @(
-            "openppp2\build\Release",
-            "openppp2\bin\Release",
-            "openppp2\${{ matrix.arch }}\Release"
+              "openppp2\bin",
+              "openppp2\build\Release",
+              "openppp2\build\bin\Release"
           )
           $found = $false
           foreach ($p in $possiblePaths) {
-            $full = Join-Path $env:GITHUB_WORKSPACE $p
-            if (Test-Path $full) {
-              Copy-Item -Path "$full\*" -Destination $artifactDir -Recurse -Force
-              $found = $true
-              break
-            }
+              $full = Join-Path $env:GITHUB_WORKSPACE $p
+              if (Test-Path $full) {
+                  Copy-Item -Path "$full\*" -Destination $artifactDir -Recurse -Force
+                  $found = $true
+                  break
+              }
           }
           if (-not $found) {
-            Write-Warning "No standard output directory found. Searching recursively for ppp.exe..."
-            $exe = Get-ChildItem -Path openppp2 -Filter ppp.exe -Recurse | Select-Object -First 1
-            if ($exe) {
-              Copy-Item $exe.FullName $artifactDir -Force
-            } else {
-              throw "ppp.exe not found!"
-            }
+              Write-Warning "No standard output directory found. Searching recursively for ppp.exe..."
+              $exe = Get-ChildItem -Path openppp2 -Filter ppp.exe -Recurse | Select-Object -First 1
+              if ($exe) {
+                  Copy-Item $exe.FullName $artifactDir -Force
+              } else {
+                  throw "ppp.exe not found!"
+              }
           }
 
+          # 复制资源文件
           $resourceFiles = @(
-            'appsettings.json', 'cacert.pem', 'cacert.sha256',
-            'dns-rules.txt', 'firewall-rules.txt', 'ip.txt', 'cmcc.txt',
-            'starrylink.net.key', 'starrylink.net.pem'
+              'appsettings.json', 'cacert.pem', 'cacert.sha256',
+              'dns-rules.txt', 'firewall-rules.txt', 'ip.txt', 'cmcc.txt',
+              'starrylink.net.key', 'starrylink.net.pem'
           )
           foreach ($file in $resourceFiles) {
-            $src = Join-Path $env:GITHUB_WORKSPACE "openppp2\$file"
-            if (Test-Path $src) { Copy-Item $src $artifactDir -Force }
+              $src = Join-Path $env:GITHUB_WORKSPACE "openppp2\$file"
+              if (Test-Path $src) { Copy-Item $src $artifactDir -Force }
           }
 
       - name: 📤 Upload Artifact
