@@ -42,7 +42,10 @@ jobs:
           echo "OPENSSL_INCLUDEDIR=$OPENSSL_PREFIX/include" >> "$GITHUB_ENV"
 
       - name: Clean build
+        shell: bash
         run: |
+          set -euxo pipefail
+
           rm -rf build/ios-device
           rm -rf build/ios-simulator
           rm -rf build/ios-headers
@@ -70,11 +73,18 @@ jobs:
 
           IOS_DEVICE_ARCHS=arm64 \
           IOS_DEPLOYMENT_TARGET=15.0 \
-          ./ios/build-xcframework.sh- name: Verify XCFramework
+          ./ios/build-xcframework.sh
+
+      - name: Verify XCFramework
+        shell: bash
         run: |
           set -euxo pipefail
+
           test -d bin/OpenPPP2.xcframework
-          find bin/OpenPPP2.xcframework -maxdepth 5 -print
+
+          find bin/OpenPPP2.xcframework \
+            -maxdepth 5 \
+            -print
 
       - name: Build unsigned IPA
         shell: bash
@@ -86,6 +96,7 @@ jobs:
 
       - name: Inspect outputs
         if: always()
+        shell: bash
         run: |
           echo "===== IPA ====="
           find . -type f -name '*.ipa' -print || true
@@ -109,13 +120,19 @@ jobs:
           fi
 
           echo "IPA_BUNDLE=$IPA" >> "$GITHUB_ENV"
+
+          echo "Found IPA:"
           ls -lh "$IPA"
 
       - name: Verify IPA
+        shell: bash
         run: |
           set -euxo pipefail
+
           test -f "$IPA_BUNDLE"
+
           file "$IPA_BUNDLE"
+
           unzip -l "$IPA_BUNDLE" | head -100
 
       - name: Upload IPA
