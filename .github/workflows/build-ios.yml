@@ -1,191 +1,57 @@
-name: Build · iOS
+name: Build iOS
 
 on:
   push:
     branches: [main]
-  pull_request:
-    branches: [main]
   workflow_dispatch:
 
-concurrency:
-  group: build-ios-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
-
 jobs:
-  build-ios:
-    name: iOS IPA
+  build:
     runs-on: macos-15
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           submodules: recursive
-          fetch-depth: 0
 
-      - name: Install dependencies
-        shell: bash
+      - name: Deps
         run: |
-          set -euxo pipefail
+          brew install cmake ninja boost
+          echo "BOOST_PREFIX=$(brew --prefix boost)" >> $GITHUB_ENV
 
-          brew install cmake ninja boost openssl
-
-          BOOST_PREFIX="$(brew --prefix boost)"
-          OPENSSL_PREFIX="$(brew --prefix openssl)"
-
-          test -f "$BOOST_PREFIX/include/boost/version.hpp"
-          test -f "$OPENSSL_PREFIX/include/openssl/ssl.h"
-
-          echo "BOOST_PREFIX=$BOOST_PREFIX" >> "$GITHUB_ENV"
-          echo "BOOST_INCLUDEDIR=$BOOST_PREFIX/include" >> "$GITHUB_ENV"
-          echo "OPENSSL_PREFIX=$OPENSSL_PREFIX" >> "$GITHUB_ENV"
-          echo "OPENSSL_INCLUDEDIR=$OPENSSL_PREFIX/include" >> "$GITHUB_ENV"
-
-      - name: Prepare iOS CMake
-        shell: bash
+      - name: Fix iOS source
         run: |
-          set -euxo pipefail
-
-          cp ios/CMakeLists.txt ios/CMakeLists.txt.original
-
           python3 - <<'PY'
           from pathlib import Path
-
-          path = Path("ios/CMakeLists.txt")
-          text = path.read_text()
-
-          marker = "add_library(openppp2_ios STATIC ${OPENPPP2_COMMON_SOURCES})"
-
-          patch = r'''
-          # iOS must not compile Linux platform implementations.
-          list(FILTER OPENPPP2_COMMON_SOURCES EXCLUDE REGEX "/linux/")
-          list(FILTER OPENPPP2_COMMON_SOURCES EXCLUDE REGEX "linux/ppp/tap/")
-          '''
-
-          if marker not in text:
-              raise SystemExit("CMake patch marker not found")
-
-          text = text.replace(
-              marker,
-              patch + "\n" + marker,
-              1
-          )
-
-          path.write_text(text)
+          p=Path("ppp/app/client/AssignedAddressManager.cpp")
+          s=p.read_text()
+          s=s.replace(
+          '#if defined(_WIN32)\n#include <windows/ppp/tap/TapWindows.h>\n#else\n#include <common/unix/UnixAfx.h>\n#if defined(_MACOS)\n#include <darwin/ppp/tap/TapDarwin.h>\n#else\n#include <linux/ppp/tap/TapLinux.h>\n#endif\n#endif',
+          '#if defined(_WIN32)\n#include <windows/ppp/tap/TapWindows.h>\n#elif defined(_IPHONE)\n#elif defined(_MACOS)\n#include <common/unix/UnixAfx.h>\n#include <darwin/ppp/tap/TapDarwin.h>\n#else\n#include <common/unix/UnixAfx.h>\n#include <linux/ppp/tap/TapLinux.h>\n#endif')
+          p.write_text(s)
           PY
 
-          echo "===== Patched iOS CMakeLists.txt ====="
-          grep -n -A6 -B3 "iOS must not compile Linux" ios/CMakeLists.txt
-
-      - name: Clean build
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          rm -rf build/ios-device
-          rm -rf build/ios-simulator
-          rm -rf build/ios-headers
-
-          rm -rf bin/OpenPPP2.xcframework
-          rm -rf bin/OpenPPP2.*.xcframework
-
       - name: Build XCFramework
-        shell: bash
         run: |
-          set -euxo pipefail
-
-          chmod +x ios/build-xcframework.sh
-
           export BOOST_ROOT="$BOOST_PREFIX"
-          export BOOST_INCLUDEDIR="$BOOST_INCLUDEDIR"
+          export BOOST_INCLUDEDIR="$BOOST_PREFIX/include"
+          export CXXFLAGS="-I$BOOST_PREFIX/include"
+          IOS_DEVICE_ARCHS=arm64 IOS_DEPLOYMENT_TARGET=15.0 ./ios/build-xcframework.sh
 
-          export OPENSSL_ROOT_DIR="$OPENSSL_PREFIX"
-          export OPENSSL_INCLUDE_DIR="$OPENSSL_INCLUDEDIR"
-
-          export CFLAGS="-I$BOOST_INCLUDEDIR -I$OPENSSL_INCLUDEDIR"
-          export CXXFLAGS="-I$BOOST_INCLUDEDIR -I$OPENSSL_INCLUDEDIR"
-
-          echo "BOOST_INCLUDEDIR=$BOOST_INCLUDEDIR"
-          echo "OPENSSL_INCLUDEDIR=$OPENSSL_INCLUDEDIR"
-          echo "CXXFLAGS=$CXXFLAGS"
-
-          IOS_DEVICE_ARCHS=arm64 \
-          IOS_DEPLOYMENT_TARGET=15.0 \
-          ./ios/build-xcframework.sh
-
-      - name: Verify XCFramework
-        shell: bash
+      - name: Build OpenSSL
         run: |
-          set -euxo pipefail
-
-          test -d bin/OpenPPP2.xcframework
-
-          find bin/OpenPPP2.xcframework \
-            -maxdepth 5 \
-            -print
-
-      - name: Build unsigned IPA
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          chmod +x ios/App/build-unsigned.sh
-
-          ./ios/App/build-unsigned.sh
-
-      - name: Inspect outputs
-        if: always()
-        shell: bash
-        run: |
-          echo "===== IPA ====="
-          find . -type f -name '*.ipa' -print || true
-
-          echo "===== APP ====="
-          find . -type d -name '*.app' -print || true
-
-          echo "===== XCFramework ====="
-          find . -type d -name '*.xcframework' -print || true
-
-      - name: Find IPA
-        shell: bash
-        run: |
-          set -e
-
-          IPA="$(find . -type f -name '*.ipa' | head -n 1)"
-
-          if [ -z "$IPA" ]; then
-            echo "::error::No IPA was generated"
+          test -n "${OPENSSL_TARBALL:-}" || {
+            echo "Set OPENSSL_TARBALL first"
             exit 1
-          fi
+          }
+          ./ios/build-openssl.sh
 
-          echo "IPA_BUNDLE=$IPA" >> "$GITHUB_ENV"
-
-          echo "Found IPA:"
-          ls -lh "$IPA"
-
-      - name: Verify IPA
-        shell: bash
+      - name: Build IPA
         run: |
-          set -euxo pipefail
-
-          test -f "$IPA_BUNDLE"
-
-          file "$IPA_BUNDLE"
-
-          unzip -l "$IPA_BUNDLE" | head -100
+          SDK=iphoneos CONFIGURATION=Release ./ios/App/build-unsigned.sh
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: openppp2-ios-unsigned
-          path: ${{ env.IPA_BUNDLE }}
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Upload XCFramework
-        uses: actions/upload-artifact@v4
-        with:
-          name: openppp2-ios-xcframework
-          path: bin/OpenPPP2.xcframework
-          if-no-files-found: error
-          retention-days: 14
+          name: openppp2-ios
+          path: bin/ipa/*.ipa
