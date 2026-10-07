@@ -30,24 +30,29 @@ jobs:
               Path("ppp/app/client/AssignedAddressManager.cpp"),
               Path("ppp/app/client/ClientNetworkInterfaceResolver.cpp"),
               Path("ppp/app/client/ClientConnectionTeardown.cpp"),
+              Path("ppp/app/client/VEthernetNetworkSwitcher.cpp"),
           ]
 
           for p in files:
               s = p.read_text()
 
               s = s.replace(
-                  '#include <linux/ppp/tap/TapLinux.h>',
-                  '#if !defined(_IPHONE)\n#include <linux/ppp/tap/TapLinux.h>\n#endif'
+                  "#include <linux/ppp/tap/TapLinux.h>",
+                  "#if !defined(_IPHONE)\n"
+                  "#include <linux/ppp/tap/TapLinux.h>\n"
+                  "#endif"
               )
 
               s = s.replace(
-                  '#include <linux/ppp/net/ProtectorNetwork.h>',
-                  '#if !defined(_IPHONE)\n#include <linux/ppp/net/ProtectorNetwork.h>\n#endif'
+                  "#include <linux/ppp/net/ProtectorNetwork.h>",
+                  "#if !defined(_IPHONE)\n"
+                  "#include <linux/ppp/net/ProtectorNetwork.h>\n"
+                  "#endif"
               )
 
               p.write_text(s)
+              print("patched:", p)
 
-          print("iOS Linux TAP includes patched")
           PY
 
       - name: Build iOS OpenSSL
