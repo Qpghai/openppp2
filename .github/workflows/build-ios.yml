@@ -70,8 +70,7 @@ jobs:
 
           IOS_DEVICE_ARCHS=arm64 \
           IOS_DEPLOYMENT_TARGET=15.0 \
-          ./ios/build-xcframework.sh
-- name: Verify XCFramework
+          ./ios/build-xcframework.sh- name: Verify XCFramework
         run: |
           set -euxo pipefail
           test -d bin/OpenPPP2.xcframework
