@@ -4,9 +4,11 @@ on:
   push:
     branches:
       - main
+
   pull_request:
     branches:
       - main
+
   workflow_dispatch:
 
 concurrency:
@@ -39,21 +41,22 @@ jobs:
       - name: Install build dependencies
         run: |
           set -euxo pipefail
+
           brew install cmake ninja boost openssl
 
           BOOST_PREFIX="$(brew --prefix boost)"
           OPENSSL_PREFIX="$(brew --prefix openssl)"
 
+          echo "Boost prefix: $BOOST_PREFIX"
+          echo "OpenSSL prefix: $OPENSSL_PREFIX"
+
           test -f "$BOOST_PREFIX/include/boost/version.hpp"
           test -f "$OPENSSL_PREFIX/include/openssl/ssl.h"
 
-          echo "BOOST_ROOT=$BOOST_PREFIX" >> "$GITHUB_ENV"
+          echo "BOOST_PREFIX=$BOOST_PREFIX" >> "$GITHUB_ENV"
           echo "BOOST_INCLUDEDIR=$BOOST_PREFIX/include" >> "$GITHUB_ENV"
-          echo "OPENSSL_ROOT_DIR=$OPENSSL_PREFIX" >> "$GITHUB_ENV"
-          echo "OPENSSL_INCLUDE_DIR=$OPENSSL_PREFIX/include" >> "$GITHUB_ENV"
-
-          echo "Boost: $BOOST_PREFIX"
-          echo "OpenSSL: $OPENSSL_PREFIX"
+          echo "OPENSSL_PREFIX=$OPENSSL_PREFIX" >> "$GITHUB_ENV"
+          echo "OPENSSL_INCLUDEDIR=$OPENSSL_PREFIX/include" >> "$GITHUB_ENV"
 
       - name: Build OpenPPP2 XCFramework
         shell: bash
@@ -61,6 +64,28 @@ jobs:
           set -euxo pipefail
 
           chmod +x ios/build-xcframework.sh
+
+          echo "Boost:"
+          echo "$BOOST_PREFIX"
+          echo "$BOOST_INCLUDEDIR"
+
+          echo "OpenSSL:"
+          echo "$OPENSSL_PREFIX"
+          echo "$OPENSSL_INCLUDEDIR"
+
+          test -f "$BOOST_INCLUDEDIR/boost/version.hpp"
+
+          export BOOST_ROOT="$BOOST_PREFIX"
+          export BOOST_INCLUDEDIR="$BOOST_INCLUDEDIR"
+
+          export OPENSSL_ROOT_DIR="$OPENSSL_PREFIX"
+          export OPENSSL_INCLUDE_DIR="$OPENSSL_INCLUDEDIR"
+
+          export CXXFLAGS="-I$BOOST_INCLUDEDIR -I$OPENSSL_INCLUDEDIR ${CXXFLAGS:-}"
+          export CFLAGS="-I$BOOST_INCLUDEDIR -I$OPENSSL_INCLUDEDIR ${CFLAGS:-}"
+
+          echo "CXXFLAGS=$CXXFLAGS"
+          echo "CFLAGS=$CFLAGS"
 
           IOS_DEVICE_ARCHS=arm64 \
           IOS_DEPLOYMENT_TARGET=15.0 \
@@ -71,7 +96,12 @@ jobs:
           set -euxo pipefail
 
           test -d bin/OpenPPP2.xcframework
-          find bin/OpenPPP2.xcframework -maxdepth 3 -type f -print
+
+          find bin/OpenPPP2.xcframework \
+            -maxdepth 3 \
+            -type f \
+            -print
+
           du -sh bin/OpenPPP2.xcframework
 
       - name: Build unsigned iOS app
@@ -80,6 +110,7 @@ jobs:
           set -euxo pipefail
 
           chmod +x ios/App/build-unsigned.sh
+
           ./ios/App/build-unsigned.sh
 
       - name: Inspect iOS outputs
@@ -88,26 +119,43 @@ jobs:
           set -x
 
           echo "===== IPA ====="
-          find . -type f -name '*.ipa' -print
+          find . \
+            -type f \
+            -name '*.ipa' \
+            -print
 
           echo "===== APP ====="
-          find . -type d -name '*.app' -print
+          find . \
+            -type d \
+            -name '*.app' \
+            -print
 
           echo "===== XCFramework ====="
-          find . -type d -name '*.xcframework' -print
+          find . \
+            -type d \
+            -name '*.xcframework' \
+            -print
 
           echo "===== Archives ====="
-          find . -type d -name '*.xcarchive' -print
+          find . \
+            -type d \
+            -name '*.xcarchive' \
+            -print
 
           echo "===== bin ====="
-          find bin -maxdepth 5 -print 2>/dev/null || true
+          find bin \
+            -maxdepth 5 \
+            -print 2>/dev/null || true
 
       - name: Find IPA
         shell: bash
         run: |
           set -e
 
-          IPA="$(find . -type f -name '*.ipa' | head -n 1)"
+          IPA="$(find . \
+            -type f \
+            -name '*.ipa' \
+            | head -n 1)"
 
           if [ -z "$IPA" ]; then
             echo "::error::No IPA was generated"
@@ -125,7 +173,9 @@ jobs:
           set -euxo pipefail
 
           test -f "$IPA_BUNDLE"
+
           file "$IPA_BUNDLE"
+
           unzip -l "$IPA_BUNDLE" | head -100
 
       - name: Upload IPA
