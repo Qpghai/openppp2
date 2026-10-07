@@ -46,35 +46,52 @@ steps:
       IOS_DEPLOYMENT_TARGET=15.0 \
       ./ios/build-xcframework.sh
 
-  - name: Build unsigned iOS IPA
+  - name: Build unsigned iOS app
     run: |
       chmod +x ios/App/build-unsigned.sh
-      chmod +x ios/package-ipa.sh
-
       ./ios/App/build-unsigned.sh
 
-  - name: Package IPA
+  - name: Find iOS app
     run: |
-      APP="$(find . -type d -path '*/Build/Products/Release-iphoneos/*.app' | head -n 1)"
+      APP="$(find . \
+        -type d \
+        -path '*/Build/Products/Release-iphoneos/*.app' \
+        | head -n 1)"
 
       if [ -z "$APP" ]; then
         echo "::error::OpenPPP2.app was not found"
-        echo "Searching build products:"
+        echo "Available .app bundles:"
         find . -type d -name '*.app' -print
         exit 1
       fi
 
-      echo "Using app:"
+      echo "APP_BUNDLE=$APP" >> "$GITHUB_ENV"
+
+      echo "Using:"
       echo "$APP"
 
-      APP_BUNDLE="$APP" ./ios/package-ipa.sh
+  - name: Package IPA
+    run: |
+      chmod +x ios/package-ipa.sh
+
+      APP_BUNDLE="$APP_BUNDLE" \
+      ./ios/package-ipa.sh
 
   - name: Verify IPA
     run: |
-      echo "IPA files:"
-      find bin/ipa -maxdepth 1 -type f -name '*.ipa' -print
+      echo "Generated IPA files:"
 
-      IPA="$(find bin/ipa -maxdepth 1 -type f -name '*.ipa' | head -n 1)"
+      find bin/ipa \
+        -maxdepth 1 \
+        -type f \
+        -name '*.ipa' \
+        -print
+
+      IPA="$(find bin/ipa \
+        -maxdepth 1 \
+        -type f \
+        -name '*.ipa' \
+        | head -n 1)"
 
       if [ -z "$IPA" ]; then
         echo "::error::IPA was not generated"
@@ -82,7 +99,7 @@ steps:
       fi
 
       echo
-      echo "Generated:"
+      echo "IPA:"
       ls -lh "$IPA"
 
   - name: Upload IPA
@@ -96,7 +113,7 @@ steps:
   - name: Upload XCFramework
     uses: actions/upload-artifact@v4
     with:
-      name: openppp2-xcframework
+      name: openppp2-ios-xcframework
       path: bin/OpenPPP2.xcframework
       if-no-files-found: error
       retention-days: 14
