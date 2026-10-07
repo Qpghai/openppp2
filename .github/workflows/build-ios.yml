@@ -30,15 +30,18 @@ jobs:
       - name: Show toolchain
         run: |
           set -euxo pipefail
+
           uname -a
           uname -m
           sw_vers
+
           xcodebuild -version
           cmake --version
           ninja --version || true
           clang --version
 
       - name: Install build dependencies
+        shell: bash
         run: |
           set -euxo pipefail
 
@@ -47,16 +50,29 @@ jobs:
           BOOST_PREFIX="$(brew --prefix boost)"
           OPENSSL_PREFIX="$(brew --prefix openssl)"
 
-          echo "Boost prefix: $BOOST_PREFIX"
-          echo "OpenSSL prefix: $OPENSSL_PREFIX"
+          echo "BOOST_PREFIX=$BOOST_PREFIX"
+          echo "OPENSSL_PREFIX=$OPENSSL_PREFIX"
 
           test -f "$BOOST_PREFIX/include/boost/version.hpp"
           test -f "$OPENSSL_PREFIX/include/openssl/ssl.h"
 
           echo "BOOST_PREFIX=$BOOST_PREFIX" >> "$GITHUB_ENV"
           echo "BOOST_INCLUDEDIR=$BOOST_PREFIX/include" >> "$GITHUB_ENV"
+
           echo "OPENSSL_PREFIX=$OPENSSL_PREFIX" >> "$GITHUB_ENV"
           echo "OPENSSL_INCLUDEDIR=$OPENSSL_PREFIX/include" >> "$GITHUB_ENV"
+
+      - name: Clean previous iOS build directories
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          rm -rf build/ios-device
+          rm -rf build/ios-simulator
+          rm -rf build/ios-headers
+
+          rm -rf bin/OpenPPP2.xcframework
+          rm -rf bin/OpenPPP2.*.xcframework
 
       - name: Build OpenPPP2 XCFramework
         shell: bash
@@ -65,41 +81,58 @@ jobs:
 
           chmod +x ios/build-xcframework.sh
 
-          echo "Boost:"
-          echo "$BOOST_PREFIX"
-          echo "$BOOST_INCLUDEDIR"
-
-          echo "OpenSSL:"
-          echo "$OPENSSL_PREFIX"
-          echo "$OPENSSL_INCLUDEDIR"
-
-          test -f "$BOOST_INCLUDEDIR/boost/version.hpp"
-
           export BOOST_ROOT="$BOOST_PREFIX"
           export BOOST_INCLUDEDIR="$BOOST_INCLUDEDIR"
 
           export OPENSSL_ROOT_DIR="$OPENSSL_PREFIX"
           export OPENSSL_INCLUDE_DIR="$OPENSSL_INCLUDEDIR"
 
-          export CXXFLAGS="-I$BOOST_INCLUDEDIR -I$OPENSSL_INCLUDEDIR ${CXXFLAGS:-}"
           export CFLAGS="-I$BOOST_INCLUDEDIR -I$OPENSSL_INCLUDEDIR ${CFLAGS:-}"
+          export CXXFLAGS="-I$BOOST_INCLUDEDIR -I$OPENSSL_INCLUDEDIR ${CXXFLAGS:-}"
 
-          echo "CXXFLAGS=$CXXFLAGS"
+          echo "========================================"
+          echo "Boost"
+          echo "========================================"
+
+          echo "BOOST_ROOT=$BOOST_ROOT"
+          echo "BOOST_INCLUDEDIR=$BOOST_INCLUDEDIR"
+
+          test -f "$BOOST_INCLUDEDIR/boost/version.hpp"
+          ls -l "$BOOST_INCLUDEDIR/boost/version.hpp"
+
+          echo "========================================"
+          echo "OpenSSL"
+          echo "========================================"
+
+          echo "OPENSSL_ROOT_DIR=$OPENSSL_ROOT_DIR"
+          echo "OPENSSL_INCLUDE_DIR=$OPENSSL_INCLUDE_DIR"
+
+          test -f "$OPENSSL_INCLUDEDIR/openssl/ssl.h"
+
+          echo "========================================"
+          echo "Compiler flags"
+          echo "========================================"
+
           echo "CFLAGS=$CFLAGS"
+          echo "CXXFLAGS=$CXXFLAGS"
+
+          echo "========================================"
+          echo "Build XCFramework"
+          echo "========================================"
 
           IOS_DEVICE_ARCHS=arm64 \
           IOS_DEPLOYMENT_TARGET=15.0 \
           ./ios/build-xcframework.sh
-
-      - name: Verify XCFramework
+          - name: Verify XCFramework
+        shell: bash
         run: |
           set -euxo pipefail
 
           test -d bin/OpenPPP2.xcframework
 
+          echo "XCFramework:"
           find bin/OpenPPP2.xcframework \
-            -maxdepth 3 \
-            -type f \
+            -maxdepth 5 \
             -print
 
           du -sh bin/OpenPPP2.xcframework
@@ -115,34 +148,50 @@ jobs:
 
       - name: Inspect iOS outputs
         if: always()
+        shell: bash
         run: |
           set -x
 
-          echo "===== IPA ====="
+          echo "========================================"
+          echo "IPA"
+          echo "========================================"
+
           find . \
             -type f \
             -name '*.ipa' \
             -print
 
-          echo "===== APP ====="
+          echo "========================================"
+          echo "APP"
+          echo "========================================"
+
           find . \
             -type d \
             -name '*.app' \
             -print
 
-          echo "===== XCFramework ====="
+          echo "========================================"
+          echo "XCFramework"
+          echo "========================================"
+
           find . \
             -type d \
             -name '*.xcframework' \
             -print
 
-          echo "===== Archives ====="
-          find . \
-            -type d \
-            -name '*.xcarchive' \
-            -print
+          echo "========================================"
+          echo "Build directory"
+          echo "========================================"
 
-          echo "===== bin ====="
+          find build \
+            -maxdepth 5 \
+            -type f \
+            -print 2>/dev/null || true
+
+          echo "========================================"
+          echo "bin directory"
+          echo "========================================"
+
           find bin \
             -maxdepth 5 \
             -print 2>/dev/null || true
@@ -174,9 +223,17 @@ jobs:
 
           test -f "$IPA_BUNDLE"
 
+          echo "========================================"
+          echo "IPA file"
+          echo "========================================"
+
           file "$IPA_BUNDLE"
 
-          unzip -l "$IPA_BUNDLE" | head -100
+          echo "========================================"
+          echo "IPA contents"
+          echo "========================================"
+
+          unzip -l "$IPA_BUNDLE" | head -200
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
