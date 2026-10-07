@@ -1,119 +1,113 @@
 name: Build · iOS
 
 on:
-push:
-branches:
-- main
+  push:
+    branches:
+      - main
 
-pull_request:
-branches:
-- main
+  pull_request:
+    branches:
+      - main
 
-workflow_dispatch:
+  workflow_dispatch:
 
 concurrency:
-group: build-ios-${{ github.event.pull_request.number || github.ref }}
-cancel-in-progress: true
+  group: build-ios-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
-build-ios:
-name: iOS IPA
-runs-on: macos-15
+  build-ios:
+    name: iOS IPA
+    runs-on: macos-15
 
-steps:
-  - name: Checkout
-    uses: actions/checkout@v4
-    with:
-      submodules: recursive
-      fetch-depth: 0
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
 
-  - name: Show toolchain
-    run: |
-      xcodebuild -version
-      cmake --version
-      ninja --version || true
-      uname -m
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          cmake --version
+          ninja --version || true
+          uname -m
 
-  - name: Install build dependencies
-    run: |
-      brew install cmake ninja
+      - name: Install build dependencies
+        run: |
+          brew install cmake ninja
 
-  - name: Build OpenPPP2 XCFramework
-    run: |
-      chmod +x ios/build-xcframework.sh
+      - name: Build OpenPPP2 XCFramework
+        run: |
+          chmod +x ios/build-xcframework.sh
+          IOS_DEVICE_ARCHS=arm64 \
+          IOS_DEPLOYMENT_TARGET=15.0 \
+          ./ios/build-xcframework.sh
 
-      IOS_DEVICE_ARCHS=arm64 \
-      IOS_DEPLOYMENT_TARGET=15.0 \
-      ./ios/build-xcframework.sh
+      - name: Build unsigned iOS app
+        run: |
+          chmod +x ios/App/build-unsigned.sh
+          ./ios/App/build-unsigned.sh
 
-  - name: Build unsigned iOS app
-    run: |
-      chmod +x ios/App/build-unsigned.sh
-      ./ios/App/build-unsigned.sh
+      - name: Find iOS app
+        run: |
+          APP="$(find . \
+            -type d \
+            -path '*/Build/Products/Release-iphoneos/*.app' \
+            | head -n 1)"
 
-  - name: Find iOS app
-    run: |
-      APP="$(find . \
-        -type d \
-        -path '*/Build/Products/Release-iphoneos/*.app' \
-        | head -n 1)"
+          if [ -z "$APP" ]; then
+            echo "::error::OpenPPP2.app was not found"
+            echo "Available .app bundles:"
+            find . -type d -name '*.app' -print
+            exit 1
+          fi
 
-      if [ -z "$APP" ]; then
-        echo "::error::OpenPPP2.app was not found"
-        echo "Available .app bundles:"
-        find . -type d -name '*.app' -print
-        exit 1
-      fi
+          echo "APP_BUNDLE=$APP" >> "$GITHUB_ENV"
+          echo "Using:"
+          echo "$APP"
 
-      echo "APP_BUNDLE=$APP" >> "$GITHUB_ENV"
+      - name: Package IPA
+        run: |
+          chmod +x ios/package-ipa.sh
+          APP_BUNDLE="$APP_BUNDLE" ./ios/package-ipa.sh
 
-      echo "Using:"
-      echo "$APP"
+      - name: Verify IPA
+        run: |
+          echo "Generated IPA files:"
+          find bin/ipa \
+            -maxdepth 1 \
+            -type f \
+            -name '*.ipa' \
+            -print
 
-  - name: Package IPA
-    run: |
-      chmod +x ios/package-ipa.sh
+          IPA="$(find bin/ipa \
+            -maxdepth 1 \
+            -type f \
+            -name '*.ipa' \
+            | head -n 1)"
 
-      APP_BUNDLE="$APP_BUNDLE" \
-      ./ios/package-ipa.sh
+          if [ -z "$IPA" ]; then
+            echo "::error::IPA was not generated"
+            exit 1
+          fi
 
-  - name: Verify IPA
-    run: |
-      echo "Generated IPA files:"
+          echo "IPA:"
+          ls -lh "$IPA"
 
-      find bin/ipa \
-        -maxdepth 1 \
-        -type f \
-        -name '*.ipa' \
-        -print
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: openppp2-ios-unsigned
+          path: bin/ipa/*.ipa
+          if-no-files-found: error
+          retention-days: 14
 
-      IPA="$(find bin/ipa \
-        -maxdepth 1 \
-        -type f \
-        -name '*.ipa' \
-        | head -n 1)"
-
-      if [ -z "$IPA" ]; then
-        echo "::error::IPA was not generated"
-        exit 1
-      fi
-
-      echo
-      echo "IPA:"
-      ls -lh "$IPA"
-
-  - name: Upload IPA
-    uses: actions/upload-artifact@v4
-    with:
-      name: openppp2-ios-unsigned
-      path: bin/ipa/*.ipa
-      if-no-files-found: error
-      retention-days: 14
-
-  - name: Upload XCFramework
-    uses: actions/upload-artifact@v4
-    with:
-      name: openppp2-ios-xcframework
-      path: bin/OpenPPP2.xcframework
-      if-no-files-found: error
-      retention-days: 14
+      - name: Upload XCFramework
+        uses: actions/upload-artifact@v4
+        with:
+          name: openppp2-ios-xcframework
+          path: bin/OpenPPP2.xcframework
+          if-no-files-found: error
+          retention-days: 14
