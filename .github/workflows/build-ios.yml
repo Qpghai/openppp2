@@ -26,35 +26,28 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
 
-          p = Path("ppp/app/client/AssignedAddressManager.cpp")
-          s = p.read_text()
+          files = [
+              Path("ppp/app/client/AssignedAddressManager.cpp"),
+              Path("ppp/app/client/ClientNetworkInterfaceResolver.cpp"),
+              Path("ppp/app/client/ClientConnectionTeardown.cpp"),
+          ]
 
-          old = """#if defined(_WIN32)
-          #include <windows/ppp/tap/TapWindows.h>
-          #else
-          #include <common/unix/UnixAfx.h>
-          #if defined(_MACOS)
-          #include <darwin/ppp/tap/TapDarwin.h>
-          #else
-          #include <linux/ppp/tap/TapLinux.h>
-          #endif
-          #endif"""
+          for p in files:
+              s = p.read_text()
 
-          new = """#if defined(_WIN32)
-          #include <windows/ppp/tap/TapWindows.h>
-          #elif defined(_IPHONE)
-          #elif defined(_MACOS)
-          #include <common/unix/UnixAfx.h>
-          #include <darwin/ppp/tap/TapDarwin.h>
-          #else
-          #include <common/unix/UnixAfx.h>
-          #include <linux/ppp/tap/TapLinux.h>
-          #endif"""
+              s = s.replace(
+                  '#include <linux/ppp/tap/TapLinux.h>',
+                  '#if !defined(_IPHONE)\n#include <linux/ppp/tap/TapLinux.h>\n#endif'
+              )
 
-          if old not in s:
-              raise SystemExit("AssignedAddressManager.cpp pattern not found")
+              s = s.replace(
+                  '#include <linux/ppp/net/ProtectorNetwork.h>',
+                  '#if !defined(_IPHONE)\n#include <linux/ppp/net/ProtectorNetwork.h>\n#endif'
+              )
 
-          p.write_text(s.replace(old, new))
+              p.write_text(s)
+
+          print("iOS Linux TAP includes patched")
           PY
 
       - name: Build iOS OpenSSL
