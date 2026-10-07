@@ -4,11 +4,9 @@ on:
   push:
     branches:
       - main
-
   pull_request:
     branches:
       - main
-
   workflow_dispatch:
 
 concurrency:
@@ -29,78 +27,112 @@ jobs:
 
       - name: Show toolchain
         run: |
+          set -euxo pipefail
+          uname -a
+          uname -m
+          sw_vers
           xcodebuild -version
           cmake --version
           ninja --version || true
-          uname -m
+          clang --version
 
       - name: Install build dependencies
         run: |
-          brew install cmake ninja
+          set -euxo pipefail
+          brew install cmake ninja boost openssl
+
+          BOOST_PREFIX="$(brew --prefix boost)"
+          OPENSSL_PREFIX="$(brew --prefix openssl)"
+
+          test -f "$BOOST_PREFIX/include/boost/version.hpp"
+          test -f "$OPENSSL_PREFIX/include/openssl/ssl.h"
+
+          echo "BOOST_ROOT=$BOOST_PREFIX" >> "$GITHUB_ENV"
+          echo "BOOST_INCLUDEDIR=$BOOST_PREFIX/include" >> "$GITHUB_ENV"
+          echo "OPENSSL_ROOT_DIR=$OPENSSL_PREFIX" >> "$GITHUB_ENV"
+          echo "OPENSSL_INCLUDE_DIR=$OPENSSL_PREFIX/include" >> "$GITHUB_ENV"
+
+          echo "Boost: $BOOST_PREFIX"
+          echo "OpenSSL: $OPENSSL_PREFIX"
 
       - name: Build OpenPPP2 XCFramework
+        shell: bash
         run: |
+          set -euxo pipefail
+
           chmod +x ios/build-xcframework.sh
+
           IOS_DEVICE_ARCHS=arm64 \
           IOS_DEPLOYMENT_TARGET=15.0 \
           ./ios/build-xcframework.sh
 
-      - name: Build unsigned iOS app
+      - name: Verify XCFramework
         run: |
+          set -euxo pipefail
+
+          test -d bin/OpenPPP2.xcframework
+          find bin/OpenPPP2.xcframework -maxdepth 3 -type f -print
+          du -sh bin/OpenPPP2.xcframework
+
+      - name: Build unsigned iOS app
+        shell: bash
+        run: |
+          set -euxo pipefail
+
           chmod +x ios/App/build-unsigned.sh
           ./ios/App/build-unsigned.sh
 
-      - name: Find iOS app
+      - name: Inspect iOS outputs
+        if: always()
         run: |
-          APP="$(find . \
-            -type d \
-            -path '*/Build/Products/Release-iphoneos/*.app' \
-            | head -n 1)"
+          set -x
 
-          if [ -z "$APP" ]; then
-            echo "::error::OpenPPP2.app was not found"
-            echo "Available .app bundles:"
-            find . -type d -name '*.app' -print
-            exit 1
-          fi
+          echo "===== IPA ====="
+          find . -type f -name '*.ipa' -print
 
-          echo "APP_BUNDLE=$APP" >> "$GITHUB_ENV"
-          echo "Using:"
-          echo "$APP"
+          echo "===== APP ====="
+          find . -type d -name '*.app' -print
 
-      - name: Package IPA
+          echo "===== XCFramework ====="
+          find . -type d -name '*.xcframework' -print
+
+          echo "===== Archives ====="
+          find . -type d -name '*.xcarchive' -print
+
+          echo "===== bin ====="
+          find bin -maxdepth 5 -print 2>/dev/null || true
+
+      - name: Find IPA
+        shell: bash
         run: |
-          chmod +x ios/package-ipa.sh
-          APP_BUNDLE="$APP_BUNDLE" ./ios/package-ipa.sh
+          set -e
 
-      - name: Verify IPA
-        run: |
-          echo "Generated IPA files:"
-          find bin/ipa \
-            -maxdepth 1 \
-            -type f \
-            -name '*.ipa' \
-            -print
-
-          IPA="$(find bin/ipa \
-            -maxdepth 1 \
-            -type f \
-            -name '*.ipa' \
-            | head -n 1)"
+          IPA="$(find . -type f -name '*.ipa' | head -n 1)"
 
           if [ -z "$IPA" ]; then
-            echo "::error::IPA was not generated"
+            echo "::error::No IPA was generated"
             exit 1
           fi
 
-          echo "IPA:"
+          echo "IPA_BUNDLE=$IPA" >> "$GITHUB_ENV"
+
+          echo "Found IPA:"
           ls -lh "$IPA"
+
+      - name: Verify IPA
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          test -f "$IPA_BUNDLE"
+          file "$IPA_BUNDLE"
+          unzip -l "$IPA_BUNDLE" | head -100
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
           name: openppp2-ios-unsigned
-          path: bin/ipa/*.ipa
+          path: ${{ env.IPA_BUNDLE }}
           if-no-files-found: error
           retention-days: 14
 
