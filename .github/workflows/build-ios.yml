@@ -14,7 +14,7 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Dependencies
+      - name: Install dependencies
         run: |
           brew install cmake ninja boost openssl@3
           brew fetch --build-from-source openssl@3
@@ -25,50 +25,70 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
-
-          files = [
-              Path("ppp/app/client/AssignedAddressManager.cpp"),
-              Path("ppp/app/client/ClientNetworkInterfaceResolver.cpp"),
-              Path("ppp/app/client/ClientConnectionTeardown.cpp"),
-              Path("ppp/app/client/VEthernetNetworkSwitcher.cpp"),
-          ]
-
-          for p in files:
+          for f in [
+              "ppp/app/client/AssignedAddressManager.cpp",
+              "ppp/app/client/ClientNetworkInterfaceResolver.cpp",
+              "ppp/app/client/ClientConnectionTeardown.cpp",
+              "ppp/app/client/VEthernetNetworkSwitcher.cpp",
+          ]:
+              p = Path(f)
               s = p.read_text()
-
               s = s.replace(
                   "#include <linux/ppp/tap/TapLinux.h>",
-                  "#if !defined(_IPHONE)\n"
-                  "#include <linux/ppp/tap/TapLinux.h>\n"
-                  "#endif"
+                  "#if !defined(_IPHONE)\n#include <linux/ppp/tap/TapLinux.h>\n#endif"
               )
-
               s = s.replace(
                   "#include <linux/ppp/net/ProtectorNetwork.h>",
-                  "#if !defined(_IPHONE)\n"
-                  "#include <linux/ppp/net/ProtectorNetwork.h>\n"
-                  "#endif"
+                  "#if !defined(_IPHONE)\n#include <linux/ppp/net/ProtectorNetwork.h>\n#endif"
               )
-
               p.write_text(s)
-              print("patched:", p)
-
           PY
 
-      - name: Build iOS OpenSSL
+      - name: Fix Xcode project
         run: |
-          ./ios/build-openssl.sh
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("ios/App/OpenPPP2.xcodeproj/project.pbxproj")
+          s = p.read_text()
+          F = "100000000000000000000146"
+          B = "100000000000000000000147"
+
+          if "RuntimeTrafficRate.swift" not in s:
+              s = s.replace(
+                  "100000000000000000000143 /* RuntimeControls.swift */ =",
+                  f"{F} /* RuntimeTrafficRate.swift */ = {{isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Runtime/RuntimeTrafficRate.swift; sourceTree = \"<group>\"; }};\n"
+                  "100000000000000000000143 /* RuntimeControls.swift */ =",
+                  1
+              )
+              s = s.replace(
+                  "10000000000000000000013C /* SubscriptionUrlPolicy.swift in Sources */ =",
+                  f"{B} /* RuntimeTrafficRate.swift in Sources */ = {{isa = PBXBuildFile; fileRef = {F} /* RuntimeTrafficRate.swift */; }};\n"
+                  "10000000000000000000013C /* SubscriptionUrlPolicy.swift in Sources */ =",
+                  1
+              )
+              s = s.replace(
+                  "100000000000000000000143 /* RuntimeControls.swift */,",
+                  f"100000000000000000000143 /* RuntimeControls.swift */,\n\t\t\t\t{F} /* RuntimeTrafficRate.swift */,",
+                  1
+              )
+              s = s.replace(
+                  "10000000000000000000013A /* RuntimeControls.swift in Sources */,",
+                  f"10000000000000000000013A /* RuntimeControls.swift in Sources */,\n\t\t\t\t{B} /* RuntimeTrafficRate.swift in Sources */,",
+                  1
+              )
+              p.write_text(s)
+          PY
+
+      - name: Build OpenSSL
+        run: ./ios/build-openssl.sh
 
       - name: Build XCFramework
         run: |
           export BOOST_ROOT="$BOOST_PREFIX"
           export BOOST_INCLUDEDIR="$BOOST_PREFIX/include"
-
           OPENSSL_PREFIX="$GITHUB_WORKSPACE/bin/openssl-ios/iphoneos-arm64"
-
           export CFLAGS="-I$OPENSSL_PREFIX/include -I$BOOST_PREFIX/include"
           export CXXFLAGS="-I$OPENSSL_PREFIX/include -I$BOOST_PREFIX/include"
-
           IOS_DEVICE_ARCHS=arm64 \
           IOS_SIMULATOR_ARCHS=arm64 \
           IOS_DEPLOYMENT_TARGET=15.0 \
@@ -80,8 +100,8 @@ jobs:
           CONFIGURATION=Release \
           ./ios/App/build-unsigned.sh
 
-      - name: Upload IPA
+      - name: Upload
         uses: actions/upload-artifact@v4
         with:
           name: openppp2-ios
-          path: bin/ipa/*.ipa
+          path: "**/*.ipa"
