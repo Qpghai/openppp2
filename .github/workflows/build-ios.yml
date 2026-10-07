@@ -41,6 +41,42 @@ jobs:
           echo "OPENSSL_PREFIX=$OPENSSL_PREFIX" >> "$GITHUB_ENV"
           echo "OPENSSL_INCLUDEDIR=$OPENSSL_PREFIX/include" >> "$GITHUB_ENV"
 
+      - name: Prepare iOS CMake
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          cp ios/CMakeLists.txt ios/CMakeLists.txt.original
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("ios/CMakeLists.txt")
+          text = path.read_text()
+
+          marker = "add_library(openppp2_ios STATIC ${OPENPPP2_COMMON_SOURCES})"
+
+          patch = r'''
+          # iOS must not compile Linux platform implementations.
+          list(FILTER OPENPPP2_COMMON_SOURCES EXCLUDE REGEX "/linux/")
+          list(FILTER OPENPPP2_COMMON_SOURCES EXCLUDE REGEX "linux/ppp/tap/")
+          '''
+
+          if marker not in text:
+              raise SystemExit("CMake patch marker not found")
+
+          text = text.replace(
+              marker,
+              patch + "\n" + marker,
+              1
+          )
+
+          path.write_text(text)
+          PY
+
+          echo "===== Patched iOS CMakeLists.txt ====="
+          grep -n -A6 -B3 "iOS must not compile Linux" ios/CMakeLists.txt
+
       - name: Clean build
         shell: bash
         run: |
@@ -49,6 +85,7 @@ jobs:
           rm -rf build/ios-device
           rm -rf build/ios-simulator
           rm -rf build/ios-headers
+
           rm -rf bin/OpenPPP2.xcframework
           rm -rf bin/OpenPPP2.*.xcframework
 
@@ -61,6 +98,7 @@ jobs:
 
           export BOOST_ROOT="$BOOST_PREFIX"
           export BOOST_INCLUDEDIR="$BOOST_INCLUDEDIR"
+
           export OPENSSL_ROOT_DIR="$OPENSSL_PREFIX"
           export OPENSSL_INCLUDE_DIR="$OPENSSL_INCLUDEDIR"
 
@@ -92,6 +130,7 @@ jobs:
           set -euxo pipefail
 
           chmod +x ios/App/build-unsigned.sh
+
           ./ios/App/build-unsigned.sh
 
       - name: Inspect outputs
