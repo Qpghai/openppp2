@@ -2,13 +2,9 @@ name: Build · iOS
 
 on:
   push:
-    branches:
-      - main
-
+    branches: [main]
   pull_request:
-    branches:
-      - main
-
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
@@ -27,20 +23,7 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
-      - name: Show toolchain
-        run: |
-          set -euxo pipefail
-
-          uname -a
-          uname -m
-          sw_vers
-
-          xcodebuild -version
-          cmake --version
-          ninja --version || true
-          clang --version
-
-      - name: Install build dependencies
+      - name: Install dependencies
         shell: bash
         run: |
           set -euxo pipefail
@@ -50,31 +33,23 @@ jobs:
           BOOST_PREFIX="$(brew --prefix boost)"
           OPENSSL_PREFIX="$(brew --prefix openssl)"
 
-          echo "BOOST_PREFIX=$BOOST_PREFIX"
-          echo "OPENSSL_PREFIX=$OPENSSL_PREFIX"
-
           test -f "$BOOST_PREFIX/include/boost/version.hpp"
           test -f "$OPENSSL_PREFIX/include/openssl/ssl.h"
 
           echo "BOOST_PREFIX=$BOOST_PREFIX" >> "$GITHUB_ENV"
           echo "BOOST_INCLUDEDIR=$BOOST_PREFIX/include" >> "$GITHUB_ENV"
-
           echo "OPENSSL_PREFIX=$OPENSSL_PREFIX" >> "$GITHUB_ENV"
           echo "OPENSSL_INCLUDEDIR=$OPENSSL_PREFIX/include" >> "$GITHUB_ENV"
 
-      - name: Clean previous iOS build directories
-        shell: bash
+      - name: Clean build
         run: |
-          set -euxo pipefail
-
           rm -rf build/ios-device
           rm -rf build/ios-simulator
           rm -rf build/ios-headers
-
           rm -rf bin/OpenPPP2.xcframework
           rm -rf bin/OpenPPP2.*.xcframework
 
-      - name: Build OpenPPP2 XCFramework
+      - name: Build XCFramework
         shell: bash
         run: |
           set -euxo pipefail
@@ -83,128 +58,51 @@ jobs:
 
           export BOOST_ROOT="$BOOST_PREFIX"
           export BOOST_INCLUDEDIR="$BOOST_INCLUDEDIR"
-
           export OPENSSL_ROOT_DIR="$OPENSSL_PREFIX"
           export OPENSSL_INCLUDE_DIR="$OPENSSL_INCLUDEDIR"
 
-          export CFLAGS="-I$BOOST_INCLUDEDIR -I$OPENSSL_INCLUDEDIR ${CFLAGS:-}"
-          export CXXFLAGS="-I$BOOST_INCLUDEDIR -I$OPENSSL_INCLUDEDIR ${CXXFLAGS:-}"
+          export CFLAGS="-I$BOOST_INCLUDEDIR -I$OPENSSL_INCLUDEDIR"
+          export CXXFLAGS="-I$BOOST_INCLUDEDIR -I$OPENSSL_INCLUDEDIR"
 
-          echo "========================================"
-          echo "Boost"
-          echo "========================================"
-
-          echo "BOOST_ROOT=$BOOST_ROOT"
           echo "BOOST_INCLUDEDIR=$BOOST_INCLUDEDIR"
-
-          test -f "$BOOST_INCLUDEDIR/boost/version.hpp"
-          ls -l "$BOOST_INCLUDEDIR/boost/version.hpp"
-
-          echo "========================================"
-          echo "OpenSSL"
-          echo "========================================"
-
-          echo "OPENSSL_ROOT_DIR=$OPENSSL_ROOT_DIR"
-          echo "OPENSSL_INCLUDE_DIR=$OPENSSL_INCLUDE_DIR"
-
-          test -f "$OPENSSL_INCLUDEDIR/openssl/ssl.h"
-
-          echo "========================================"
-          echo "Compiler flags"
-          echo "========================================"
-
-          echo "CFLAGS=$CFLAGS"
+          echo "OPENSSL_INCLUDEDIR=$OPENSSL_INCLUDEDIR"
           echo "CXXFLAGS=$CXXFLAGS"
-
-          echo "========================================"
-          echo "Build XCFramework"
-          echo "========================================"
 
           IOS_DEVICE_ARCHS=arm64 \
           IOS_DEPLOYMENT_TARGET=15.0 \
           ./ios/build-xcframework.sh
-          - name: Verify XCFramework
-        shell: bash
+- name: Verify XCFramework
         run: |
           set -euxo pipefail
-
           test -d bin/OpenPPP2.xcframework
+          find bin/OpenPPP2.xcframework -maxdepth 5 -print
 
-          echo "XCFramework:"
-          find bin/OpenPPP2.xcframework \
-            -maxdepth 5 \
-            -print
-
-          du -sh bin/OpenPPP2.xcframework
-
-      - name: Build unsigned iOS app
+      - name: Build unsigned IPA
         shell: bash
         run: |
           set -euxo pipefail
 
           chmod +x ios/App/build-unsigned.sh
-
           ./ios/App/build-unsigned.sh
 
-      - name: Inspect iOS outputs
+      - name: Inspect outputs
         if: always()
-        shell: bash
         run: |
-          set -x
+          echo "===== IPA ====="
+          find . -type f -name '*.ipa' -print || true
 
-          echo "========================================"
-          echo "IPA"
-          echo "========================================"
+          echo "===== APP ====="
+          find . -type d -name '*.app' -print || true
 
-          find . \
-            -type f \
-            -name '*.ipa' \
-            -print
-
-          echo "========================================"
-          echo "APP"
-          echo "========================================"
-
-          find . \
-            -type d \
-            -name '*.app' \
-            -print
-
-          echo "========================================"
-          echo "XCFramework"
-          echo "========================================"
-
-          find . \
-            -type d \
-            -name '*.xcframework' \
-            -print
-
-          echo "========================================"
-          echo "Build directory"
-          echo "========================================"
-
-          find build \
-            -maxdepth 5 \
-            -type f \
-            -print 2>/dev/null || true
-
-          echo "========================================"
-          echo "bin directory"
-          echo "========================================"
-
-          find bin \
-            -maxdepth 5 \
-            -print 2>/dev/null || true
+          echo "===== XCFramework ====="
+          find . -type d -name '*.xcframework' -print || true
 
       - name: Find IPA
         shell: bash
         run: |
           set -e
 
-          IPA="$(find . \
-            -type f \
-            -name '*.ipa' \
-            | head -n 1)"
+          IPA="$(find . -type f -name '*.ipa' | head -n 1)"
 
           if [ -z "$IPA" ]; then
             echo "::error::No IPA was generated"
@@ -212,28 +110,14 @@ jobs:
           fi
 
           echo "IPA_BUNDLE=$IPA" >> "$GITHUB_ENV"
-
-          echo "Found IPA:"
           ls -lh "$IPA"
 
       - name: Verify IPA
-        shell: bash
         run: |
           set -euxo pipefail
-
           test -f "$IPA_BUNDLE"
-
-          echo "========================================"
-          echo "IPA file"
-          echo "========================================"
-
           file "$IPA_BUNDLE"
-
-          echo "========================================"
-          echo "IPA contents"
-          echo "========================================"
-
-          unzip -l "$IPA_BUNDLE" | head -200
+          unzip -l "$IPA_BUNDLE" | head -100
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
