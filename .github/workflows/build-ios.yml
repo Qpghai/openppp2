@@ -8,155 +8,67 @@ on:
 jobs:
   build:
     runs-on: macos-15
-
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Install dependencies
+      - name: Install
         run: |
           brew install cmake ninja boost openssl@3 ldid
           brew fetch --build-from-source openssl@3
-          echo "BOOST_PREFIX=$(brew --prefix boost)" >> "$GITHUB_ENV"
-          echo "OPENSSL_TARBALL=$(brew --cache --build-from-source openssl@3)" >> "$GITHUB_ENV"
+          echo "BOOST_PREFIX=$(brew --prefix boost)" >> $GITHUB_ENV
+          echo "OPENSSL_TARBALL=$(brew --cache --build-from-source openssl@3)" >> $GITHUB_ENV
 
-      - name: Fix iOS source
+      - name: Fix source
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          for f in [
-              "ppp/app/client/AssignedAddressManager.cpp",
-              "ppp/app/client/ClientNetworkInterfaceResolver.cpp",
-              "ppp/app/client/ClientConnectionTeardown.cpp",
-              "ppp/app/client/VEthernetNetworkSwitcher.cpp",
-          ]:
-              p = Path(f)
-              s = p.read_text()
-              s = s.replace(
-                  "#include <linux/ppp/tap/TapLinux.h>",
-                  "#if !defined(_IPHONE)\n#include <linux/ppp/tap/TapLinux.h>\n#endif"
-              )
-              s = s.replace(
-                  "#include <linux/ppp/net/ProtectorNetwork.h>",
-                  "#if !defined(_IPHONE)\n#include <linux/ppp/net/ProtectorNetwork.h>\n#endif"
-              )
+          for f in ["ppp/app/client/AssignedAddressManager.cpp","ppp/app/client/ClientNetworkInterfaceResolver.cpp","ppp/app/client/ClientConnectionTeardown.cpp","ppp/app/client/VEthernetNetworkSwitcher.cpp"]:
+              p=Path(f);s=p.read_text()
+              s=s.replace("#include <linux/ppp/tap/TapLinux.h>","#if !defined(_IPHONE)\n#include <linux/ppp/tap/TapLinux.h>\n#endif")
+              s=s.replace("#include <linux/ppp/net/ProtectorNetwork.h>","#if !defined(_IPHONE)\n#include <linux/ppp/net/ProtectorNetwork.h>\n#endif")
               p.write_text(s)
           PY
 
-      - name: Fix Xcode project
+      - name: Fix Xcode
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          p = Path("ios/App/OpenPPP2.xcodeproj/project.pbxproj")
-          s = p.read_text()
-          F = "100000000000000000000146"
-          B = "100000000000000000000147"
-
+          p=Path("ios/App/OpenPPP2.xcodeproj/project.pbxproj");s=p.read_text()
+          F="100000000000000000000146";B="100000000000000000000147"
           if "RuntimeTrafficRate.swift" not in s:
-              s = s.replace(
-                  "100000000000000000000143 /* RuntimeControls.swift */ =",
-                  f"{F} /* RuntimeTrafficRate.swift */ = {{isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Runtime/RuntimeTrafficRate.swift; sourceTree = \"<group>\"; }};\n"
-                  "100000000000000000000143 /* RuntimeControls.swift */ =",
-                  1
-              )
-              s = s.replace(
-                  "10000000000000000000013C /* SubscriptionUrlPolicy.swift in Sources */ =",
-                  f"{B} /* RuntimeTrafficRate.swift in Sources */ = {{isa = PBXBuildFile; fileRef = {F} /* RuntimeTrafficRate.swift */; }};\n"
-                  "10000000000000000000013C /* SubscriptionUrlPolicy.swift in Sources */ =",
-                  1
-              )
-              s = s.replace(
-                  "100000000000000000000143 /* RuntimeControls.swift */,",
-                  f"100000000000000000000143 /* RuntimeControls.swift */,\n\t\t\t\t{F} /* RuntimeTrafficRate.swift */,",
-                  1
-              )
-              s = s.replace(
-                  "10000000000000000000013A /* RuntimeControls.swift in Sources */,",
-                  f"10000000000000000000013A /* RuntimeControls.swift in Sources */,\n\t\t\t\t{B} /* RuntimeTrafficRate.swift in Sources */,",
-                  1
-              )
+              s=s.replace("100000000000000000000143 /* RuntimeControls.swift */ =",f'{F} /* RuntimeTrafficRate.swift */ = {{isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Runtime/RuntimeTrafficRate.swift; sourceTree = "<group>"; }};\n100000000000000000000143 /* RuntimeControls.swift */ =',1)
+              s=s.replace("10000000000000000000013C /* SubscriptionUrlPolicy.swift in Sources */ =",f'{B} /* RuntimeTrafficRate.swift in Sources */ = {{isa = PBXBuildFile; fileRef = {F} /* RuntimeTrafficRate.swift */; }};\n10000000000000000000013C /* SubscriptionUrlPolicy.swift in Sources */ =',1)
+              s=s.replace("100000000000000000000143 /* RuntimeControls.swift */,",f'100000000000000000000143 /* RuntimeControls.swift */,\n\t\t\t\t{F} /* RuntimeTrafficRate.swift */,',1)
+              s=s.replace("10000000000000000000013A /* RuntimeControls.swift in Sources */,",f'10000000000000000000013A /* RuntimeControls.swift in Sources */,\n\t\t\t\t{B} /* RuntimeTrafficRate.swift in Sources */,',1)
               p.write_text(s)
           PY
 
-      - name: Build OpenSSL
-        run: ./ios/build-openssl.sh
-
-      - name: Build XCFramework
+      - name: Build
         run: |
+          ./ios/build-openssl.sh
           export BOOST_ROOT="$BOOST_PREFIX"
           export BOOST_INCLUDEDIR="$BOOST_PREFIX/include"
-          OPENSSL_PREFIX="$GITHUB_WORKSPACE/bin/openssl-ios/iphoneos-arm64"
-          export CFLAGS="-I$OPENSSL_PREFIX/include -I$BOOST_PREFIX/include"
-          export CXXFLAGS="-I$OPENSSL_PREFIX/include -I$BOOST_PREFIX/include"
-          IOS_DEVICE_ARCHS=arm64 \
-          IOS_SIMULATOR_ARCHS=arm64 \
-          IOS_DEPLOYMENT_TARGET=15.0 \
-          ./ios/build-xcframework.sh
+          O="$GITHUB_WORKSPACE/bin/openssl-ios/iphoneos-arm64"
+          export CFLAGS="-I$O/include -I$BOOST_PREFIX/include"
+          export CXXFLAGS="-I$O/include -I$BOOST_PREFIX/include"
+          IOS_DEVICE_ARCHS=arm64 IOS_SIMULATOR_ARCHS=arm64 IOS_DEPLOYMENT_TARGET=15.0 ./ios/build-xcframework.sh
+          SDK=iphoneos CONFIGURATION=Release ./ios/App/build-unsigned.sh
 
-      - name: Build IPA
+      - name: TrollStore IPA
         run: |
-          SDK=iphoneos \
-          CONFIGURATION=Release \
-          ./ios/App/build-unsigned.sh
-
-- name: Add PacketTunnel entitlement
-        run: |
-          set -euxo pipefail
-
-          cat > /tmp/packet.entitlements <<'EOF'
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
-          "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-            <key>com.apple.developer.networking.networkextension</key>
-            <array>
-              <string>packet-tunnel-provider</string>
-            </array>
-          </dict>
-          </plist>
-          EOF
-
-          rm -rf /tmp/openppp2
-          mkdir -p /tmp/openppp2
-
-          unzip -q bin/ipa/OpenPPP2-iphoneos.ipa -d /tmp/openppp2
-
-          APP="/tmp/openppp2/Payload/OpenPPP2.app"
-          EXT="$APP/PlugIns/OpenPPP2PacketTunnel.appex"
-          BIN="$EXT/Contents/MacOS/OpenPPP2PacketTunnel"
-
-          echo "APP=$APP"
-          echo "EXT=$EXT"
-          echo "BIN=$BIN"
-
-          test -d "$APP"
-          test -d "$EXT"
-          test -f "$BIN"
-
-          echo "=== PacketTunnel binary ==="
-          ls -lh "$BIN"
-
-          echo "=== Add entitlement ==="
-          ldid -S/tmp/packet.entitlements "$BIN"
-
-          echo "=== Verify entitlement ==="
-          ldid -e "$BIN"
-
-          rm -rf bin/ipa/trollstore
-          mkdir -p bin/ipa/trollstore/Payload
-
-          cp -R "$APP" bin/ipa/trollstore/Payload/
-
-          cd bin/ipa/trollstore
+          mkdir -p /tmp/p
+          unzip -q bin/ipa/OpenPPP2-iphoneos.ipa -d /tmp/p
+          printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>com.apple.developer.networking.networkextension</key><array><string>packet-tunnel-provider</string></array></dict></plist>' >/tmp/e
+          B=/tmp/p/Payload/OpenPPP2.app/PlugIns/OpenPPP2PacketTunnel.appex/Contents/MacOS/OpenPPP2PacketTunnel
+          ldid -S/tmp/e "$B"
+          mkdir -p bin/ipa/out/Payload
+          cp -R /tmp/p/Payload/OpenPPP2.app bin/ipa/out/Payload/
+          cd bin/ipa/out
           zip -qry ../OpenPPP2-TrollStore.ipa Payload
 
-          echo "=== Final IPA ==="
-          ls -lh ../OpenPPP2-TrollStore.ipa
-          
-      - name: Upload
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: openppp2-trollstore
-          path: bin/ipa/OPENPPP2--TrollStore.ipa
+          path: bin/ipa/OpenPPP2-TrollStore.ipa
