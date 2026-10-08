@@ -100,8 +100,10 @@ jobs:
           CONFIGURATION=Release \
           ./ios/App/build-unsigned.sh
 
-      - name: Add PacketTunnel entitlement
+- name: Add PacketTunnel entitlement
         run: |
+          set -euxo pipefail
+
           cat > /tmp/packet.entitlements <<'EOF'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
@@ -116,18 +118,43 @@ jobs:
           </plist>
           EOF
 
-          APP=$(find . -type d -name "OpenPPP2.app" | head -1)
-          EXT=$(find "$APP/PlugIns" -type d -name "OpenPPP2PacketTunnel.appex" | head -1)
+          rm -rf /tmp/openppp2
+          mkdir -p /tmp/openppp2
+
+          unzip -q bin/ipa/OpenPPP2-iphoneos.ipa -d /tmp/openppp2
+
+          APP="/tmp/openppp2/Payload/OpenPPP2.app"
+          EXT="$APP/PlugIns/OpenPPP2PacketTunnel.appex"
           BIN="$EXT/Contents/MacOS/OpenPPP2PacketTunnel"
 
+          echo "APP=$APP"
+          echo "EXT=$EXT"
+          echo "BIN=$BIN"
+
+          test -d "$APP"
+          test -d "$EXT"
+          test -f "$BIN"
+
+          echo "=== PacketTunnel binary ==="
+          ls -lh "$BIN"
+
+          echo "=== Add entitlement ==="
           ldid -S/tmp/packet.entitlements "$BIN"
+
+          echo "=== Verify entitlement ==="
           ldid -e "$BIN"
 
-          mkdir -p bin/ipa/Payload
-          cp -R "$APP" bin/ipa/Payload/
-          cd bin/ipa
-          zip -qry OpenPPP2-TrollStore.ipa Payload
+          rm -rf bin/ipa/trollstore
+          mkdir -p bin/ipa/trollstore/Payload
 
+          cp -R "$APP" bin/ipa/trollstore/Payload/
+
+          cd bin/ipa/trollstore
+          zip -qry ../OpenPPP2-TrollStore.ipa Payload
+
+          echo "=== Final IPA ==="
+          ls -lh ../OpenPPP2-TrollStore.ipa
+          
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
