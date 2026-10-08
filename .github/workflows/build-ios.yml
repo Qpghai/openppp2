@@ -16,7 +16,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          brew install cmake ninja boost openssl@3
+          brew install cmake ninja boost openssl@3 ldid
           brew fetch --build-from-source openssl@3
           echo "BOOST_PREFIX=$(brew --prefix boost)" >> "$GITHUB_ENV"
           echo "OPENSSL_TARBALL=$(brew --cache --build-from-source openssl@3)" >> "$GITHUB_ENV"
@@ -100,8 +100,36 @@ jobs:
           CONFIGURATION=Release \
           ./ios/App/build-unsigned.sh
 
+      - name: Add PacketTunnel entitlement
+        run: |
+          cat > /tmp/packet.entitlements <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+          "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>com.apple.developer.networking.networkextension</key>
+            <array>
+              <string>packet-tunnel-provider</string>
+            </array>
+          </dict>
+          </plist>
+          EOF
+
+          APP=$(find . -type d -name "OpenPPP2.app" | head -1)
+          EXT=$(find "$APP/PlugIns" -type d -name "OpenPPP2PacketTunnel.appex" | head -1)
+          BIN="$EXT/Contents/MacOS/OpenPPP2PacketTunnel"
+
+          ldid -S/tmp/packet.entitlements "$BIN"
+          ldid -e "$BIN"
+
+          mkdir -p bin/ipa/Payload
+          cp -R "$APP" bin/ipa/Payload/
+          cd bin/ipa
+          zip -qry OpenPPP2-TrollStore.ipa Payload
+
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: openppp2-ios
-          path: "**/*.ipa"
+          name: openppp2-trollstore
+          path: bin/ipa/OPENPPP2--TrollStore.ipa
